@@ -17,37 +17,75 @@ const COLORS = {
 };
 
 // ----------------------------------------------------------------------------
-// FOFA Wordmark (inline SVG)
-// Side-profile concept: the "O" in FOFA framed as a horizon / planet edge,
-// with a thin diagonal stroke suggesting a pitch line cutting across.
+// FOFA Wordmark — uses real type for crisp rendering at any scale.
+// The "O" is replaced with a horizon ring (the ball, the planet, the pitch).
 // ----------------------------------------------------------------------------
-function FofaMark({ size = 44, tone = "light" }) {
+function FofaMark({ size = 22, tone = "light" }) {
   const stroke = tone === "light" ? "#F2F5EE" : COLORS.bg;
   const accent = COLORS.green;
+  // Sized so the SVG height = `size`. Width auto-scales via viewBox.
   return (
     <svg
-      width={size * 3.4}
       height={size}
-      viewBox="0 0 340 100"
+      viewBox="0 0 220 60"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      aria-label="FOFA"
+      aria-label="FOFA — Football Open For All"
+      style={{ display: "block", overflow: "visible" }}
     >
       {/* F */}
-      <path d="M 10 18 L 60 18 L 60 30 L 24 30 L 24 50 L 54 50 L 54 62 L 24 62 L 24 90 L 10 90 Z" fill={stroke} />
-      {/* O — horizon ring */}
-      <circle cx="105" cy="54" r="36" stroke={stroke} strokeWidth="14" fill="none" />
-      {/* horizon line cutting through the O */}
-      <line x1="71" y1="54" x2="139" y2="54" stroke={accent} strokeWidth="2" opacity="0.85" />
-      {/* F */}
-      <path d="M 158 18 L 208 18 L 208 30 L 172 30 L 172 50 L 202 50 L 202 62 L 172 62 L 172 90 L 158 90 Z" fill={stroke} />
-      {/* A */}
-      <path
-        d="M 250 90 L 264 90 L 271 72 L 301 72 L 308 90 L 322 90 L 290 18 L 282 18 Z M 276 60 L 296 60 L 286 34 Z"
+      <text
+        x="0"
+        y="48"
         fill={stroke}
-      />
-      {/* tiny accent dot — the ball, the planet, the spark */}
-      <circle cx="332" cy="22" r="3.5" fill={accent} />
+        style={{
+          fontFamily: "'Barlow Condensed', sans-serif",
+          fontWeight: 900,
+          fontSize: 56,
+          letterSpacing: "-0.02em",
+        }}
+      >
+        F
+      </text>
+
+      {/* O — horizon ring with a green pitch line cutting through */}
+      <g transform="translate(46, 30)">
+        <circle r="22" stroke={stroke} strokeWidth="7" fill="none" />
+        <line x1="-22" y1="0" x2="22" y2="0" stroke={accent} strokeWidth="2.5" />
+      </g>
+
+      {/* F */}
+      <text
+        x="84"
+        y="48"
+        fill={stroke}
+        style={{
+          fontFamily: "'Barlow Condensed', sans-serif",
+          fontWeight: 900,
+          fontSize: 56,
+          letterSpacing: "-0.02em",
+        }}
+      >
+        F
+      </text>
+
+      {/* A */}
+      <text
+        x="124"
+        y="48"
+        fill={stroke}
+        style={{
+          fontFamily: "'Barlow Condensed', sans-serif",
+          fontWeight: 900,
+          fontSize: 56,
+          letterSpacing: "-0.02em",
+        }}
+      >
+        A
+      </text>
+
+      {/* accent spark — the ball, the planet, the start of every story */}
+      <circle cx="174" cy="14" r="3" fill={accent} />
     </svg>
   );
 }
@@ -1059,7 +1097,7 @@ export default function FOFA() {
                 {col.title}
               </div>
               {col.links.map((l, j) => (
-                <a
+                
                   key={j}
                   href="#"
                   style={{
