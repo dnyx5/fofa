@@ -978,7 +978,7 @@ export default function FOFA() {
 
           <Reveal delay={500}>
             <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
-              <a href="#" className="cta">
+              <a href="#portal" className="cta">
                 Join as a Fan
                 <svg width="20" height="10" viewBox="0 0 20 10" fill="none">
                   <path d="M0 5 L18 5 M14 1 L18 5 L14 9" stroke="currentColor" strokeWidth="1.5" />
