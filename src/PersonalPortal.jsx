@@ -327,7 +327,7 @@ export default function PersonalPortal() {
         <AuthForm type="register" onSubmit={handleRegister} loading={loading} onSwitchView={() => setCurrentView("login")} />
       )}
       {currentView === "portal" && user && (
-        <PortalDashboard user={user} passport={passport} token={token} onRefresh={fetchUserProfile} />
+        <PortalDashboard user={user} passport={passport} token={token} onRefresh={fetchUserProfile} apiUrl={API_URL} />
       )}
     </div>
   );
@@ -505,14 +505,22 @@ function AuthForm({ type, onSubmit, loading, onSwitchView }) {
 // PORTAL DASHBOARD
 // ============================================================================
 
-function PortalDashboard({ user, passport, token, onRefresh }) {
+function PortalDashboard({ user, passport, token, onRefresh, apiUrl }) {
   const [activeTab, setActiveTab] = useState("passport");
+
+  const TAB_LABELS = {
+    passport: "Passport",
+    record: "Record Activity",
+    social: "X Sync",
+    history: "History",
+    profile: "Profile",
+  };
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto" }}>
       {/* TABS */}
-      <div style={{ display: "flex", gap: 24, marginBottom: 40, borderBottom: `1px solid ${COLORS.hairline}`, paddingBottom: 16 }}>
-        {["passport", "record", "history", "profile"].map((tab) => (
+      <div style={{ display: "flex", gap: 24, marginBottom: 40, borderBottom: `1px solid ${COLORS.hairline}`, paddingBottom: 16, flexWrap: "wrap" }}>
+        {Object.keys(TAB_LABELS).map((tab) => (
           <button
             key={tab}
             className="btn-ghost"
@@ -524,16 +532,17 @@ function PortalDashboard({ user, passport, token, onRefresh }) {
               borderLeft: "none",
               borderRight: "none",
               borderTop: "none",
-              textTransform: "capitalize",
+              textTransform: "none",
             }}
           >
-            {tab === "record" ? "Record Activity" : tab}
+            {TAB_LABELS[tab]}
           </button>
         ))}
       </div>
 
       {activeTab === "passport" && <PassportCard user={user} passport={passport} />}
       {activeTab === "record" && <RecordInteraction token={token} onComplete={onRefresh} />}
+      {activeTab === "social" && <SocialSync token={token} apiUrl={apiUrl} onComplete={onRefresh} />}
       {activeTab === "history" && <InteractionHistory passport={passport} />}
       {activeTab === "profile" && <ProfileTab user={user} token={token} onUpdate={onRefresh} />}
     </div>
@@ -1340,6 +1349,486 @@ function ProfileTab({ user, token, onUpdate }) {
       </div>
     </div>
   );
+}
+
+// ============================================================================
+// SOCIAL SYNC — X (Twitter) OAuth & Activity Sync
+// ============================================================================
+
+function SocialSync({ token, apiUrl, onComplete }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
+  const [clubs, setClubs] = useState([]);
+  const [showClubs, setShowClubs] = useState(false);
+
+  useEffect(() => {
+    fetchStatus();
+    fetchClubs();
+    // Check URL for twitter callback result
+    const hash = window.location.hash;
+    if (hash.includes("twitter=connected")) {
+      // Clean URL
+      window.location.hash = "#portal";
+      fetchStatus();
+    }
+  }, []);
+
+  async function fetchStatus() {
+    setLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/twitter/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setStatus(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch X status:", err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function fetchClubs() {
+    try {
+      const res = await fetch(`${apiUrl}/api/twitter/clubs`);
+      if (res.ok) {
+        const data = await res.json();
+        setClubs(data.clubs || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch clubs:", err);
+    }
+  }
+
+  function connectX() {
+    // Redirect to OAuth endpoint
+    window.location.href = `${apiUrl}/api/twitter/auth?token=${token}`;
+  }
+
+  async function disconnectX() {
+    try {
+      const res = await fetch(`${apiUrl}/api/twitter/disconnect`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setStatus({ connected: false });
+        setSyncResult(null);
+      }
+    } catch (err) {
+      console.error("Failed to disconnect:", err);
+    }
+  }
+
+  async function syncNow() {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await fetch(`${apiUrl}/api/twitter/sync`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+      if (!res.ok) throw new Error("Sync failed");
+      const data = await res.json();
+      setSyncResult(data);
+      onComplete(); // refresh passport data
+    } catch (err) {
+      console.error("Sync failed:", err);
+      setSyncResult({ error: err.message });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div style={{ maxWidth: 700, margin: "0 auto", textAlign: "center", padding: 60 }}>
+        <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 14, color: COLORS.body, opacity: 0.6 }}>
+          Checking X connection...
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth: 700, margin: "0 auto" }}>
+      <h2 style={{
+        fontFamily: "'Barlow Condensed', sans-serif",
+        fontSize: 28,
+        fontWeight: 900,
+        color: "#F2F5EE",
+        marginBottom: 8,
+      }}>
+        X (Twitter) Sync
+      </h2>
+      <p style={{ marginBottom: 32, opacity: 0.7, lineHeight: 1.6 }}>
+        Connect your X account and sync your likes, retweets, and replies on football club posts.
+        Each qualifying interaction earns 10 passport points.
+      </p>
+
+      {/* Demo mode banner */}
+      {status?.demo_mode && (
+        <div style={{
+          background: `${COLORS.gold}15`,
+          border: `1px solid ${COLORS.gold}40`,
+          borderRadius: 8,
+          padding: "14px 20px",
+          marginBottom: 24,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+        }}>
+          <span style={{ fontSize: 20 }}>🧪</span>
+          <div>
+            <div style={{ color: COLORS.gold, fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: "0.1em", marginBottom: 4 }}>
+              DEMO MODE
+            </div>
+            <div style={{ fontSize: 13, color: COLORS.body, opacity: 0.8 }}>
+              No X API keys configured. Sync will generate simulated club interactions for testing.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Connection Status Card */}
+      <div style={{
+        background: COLORS.bgSoft,
+        border: `1px solid ${status?.connected ? COLORS.teal + "60" : COLORS.hairline}`,
+        borderRadius: 8,
+        padding: 28,
+        marginBottom: 24,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: status?.connected ? 20 : 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            {/* X Logo */}
+            <div style={{
+              width: 48,
+              height: 48,
+              background: status?.connected ? `${COLORS.teal}20` : COLORS.bg,
+              border: `2px solid ${status?.connected ? COLORS.teal : COLORS.hairline}`,
+              borderRadius: 12,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 22,
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontWeight: 900,
+              color: status?.connected ? COLORS.teal : COLORS.body,
+            }}>
+              𝕏
+            </div>
+            <div>
+              <div style={{ color: "#F2F5EE", fontSize: 16, fontWeight: 500, marginBottom: 4 }}>
+                {status?.connected ? (
+                  <>
+                    Connected as <span style={{ color: COLORS.teal }}>@{status.twitter_username}</span>
+                  </>
+                ) : (
+                  "Not Connected"
+                )}
+              </div>
+              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: COLORS.body, opacity: 0.5 }}>
+                {status?.connected
+                  ? status.last_synced
+                    ? `Last synced: ${new Date(status.last_synced).toLocaleString()}`
+                    : "Never synced"
+                  : "Connect to start earning social points"}
+              </div>
+            </div>
+          </div>
+
+          {!status?.connected ? (
+            <button className="btn-primary" onClick={connectX}>
+              Connect X
+            </button>
+          ) : (
+            <button
+              className="btn-ghost"
+              onClick={disconnectX}
+              style={{ fontSize: 10, padding: "8px 14px", borderColor: COLORS.red + "60", color: COLORS.red }}
+            >
+              Disconnect
+            </button>
+          )}
+        </div>
+
+        {/* Sync Now Button */}
+        {status?.connected && (
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <button
+              className="btn-primary"
+              onClick={syncNow}
+              disabled={syncing}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: COLORS.teal,
+              }}
+            >
+              {syncing ? (
+                <>
+                  <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span>
+                  Syncing...
+                </>
+              ) : (
+                "Sync Now"
+              )}
+            </button>
+            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: COLORS.body, opacity: 0.5 }}>
+              Pull latest likes, retweets & replies
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Sync Results */}
+      {syncResult && !syncResult.error && (
+        <div style={{
+          background: `${COLORS.green}08`,
+          border: `1px solid ${COLORS.green}30`,
+          borderRadius: 8,
+          padding: 24,
+          marginBottom: 24,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <div>
+              <div style={{ color: COLORS.green, fontFamily: "'Barlow Condensed', sans-serif", fontSize: 20, fontWeight: 700, marginBottom: 4 }}>
+                Sync Complete!
+              </div>
+              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: COLORS.body, opacity: 0.7 }}>
+                {syncResult.total_found} interaction(s) found, {syncResult.new_interactions?.length || 0} new
+                {syncResult.already_synced > 0 && `, ${syncResult.already_synced} already recorded`}
+              </div>
+            </div>
+            {syncResult.points_earned > 0 && (
+              <div style={{
+                background: `${COLORS.green}20`,
+                color: COLORS.green,
+                fontFamily: "'DM Mono', monospace",
+                fontSize: 18,
+                fontWeight: 700,
+                padding: "8px 16px",
+                borderRadius: 8,
+              }}>
+                +{syncResult.points_earned} pts
+              </div>
+            )}
+          </div>
+
+          {/* List new interactions */}
+          {syncResult.new_interactions?.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {syncResult.new_interactions.map((ix, i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "12px 16px",
+                    background: COLORS.bgSoft,
+                    borderRadius: 4,
+                    border: `1px solid ${COLORS.hairline}`,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
+                    <span style={{
+                      fontSize: 14,
+                      background: actionColor(ix.metadata?.action) + "20",
+                      color: actionColor(ix.metadata?.action),
+                      padding: "4px 8px",
+                      borderRadius: 4,
+                      fontFamily: "'DM Mono', monospace",
+                      textTransform: "uppercase",
+                      fontSize: 10,
+                      letterSpacing: "0.05em",
+                      whiteSpace: "nowrap",
+                    }}>
+                      {ix.metadata?.action || "engage"}
+                    </span>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ color: COLORS.teal, fontSize: 13, fontFamily: "'DM Mono', monospace" }}>
+                        {ix.metadata?.club_handle}
+                      </div>
+                      <div style={{
+                        fontSize: 12,
+                        color: COLORS.body,
+                        opacity: 0.6,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        maxWidth: 350,
+                      }}>
+                        {ix.metadata?.tweet_preview}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ color: COLORS.green, fontFamily: "'DM Mono', monospace", fontSize: 12, whiteSpace: "nowrap", marginLeft: 12 }}>
+                    +10
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {syncResult.new_interactions?.length === 0 && (
+            <div style={{ textAlign: "center", padding: "16px 0", opacity: 0.6, fontSize: 14 }}>
+              No new club interactions found since last sync.
+            </div>
+          )}
+        </div>
+      )}
+
+      {syncResult?.error && (
+        <div style={{
+          background: `${COLORS.red}15`,
+          border: `1px solid ${COLORS.red}40`,
+          borderRadius: 8,
+          padding: "14px 20px",
+          marginBottom: 24,
+          color: "#FF9AAD",
+          fontSize: 14,
+        }}>
+          Sync failed: {syncResult.error}
+        </div>
+      )}
+
+      {/* Tracked Clubs */}
+      <div style={{
+        background: COLORS.bgSoft,
+        border: `1px solid ${COLORS.hairline}`,
+        borderRadius: 8,
+        overflow: "hidden",
+      }}>
+        <button
+          onClick={() => setShowClubs(!showClubs)}
+          style={{
+            width: "100%",
+            background: "transparent",
+            border: "none",
+            padding: "16px 20px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            cursor: "pointer",
+            color: COLORS.body,
+          }}
+        >
+          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, letterSpacing: "0.1em" }}>
+            TRACKED CLUBS ({clubs.length})
+          </span>
+          <span style={{ fontSize: 12, opacity: 0.5 }}>
+            {showClubs ? "▲" : "▼"}
+          </span>
+        </button>
+
+        {showClubs && (
+          <div style={{ padding: "0 20px 20px", display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {clubs.map((club, i) => (
+              <div
+                key={i}
+                style={{
+                  background: COLORS.bg,
+                  border: `1px solid ${COLORS.hairline}`,
+                  borderRadius: 20,
+                  padding: "6px 14px",
+                  fontSize: 12,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <span style={{ color: COLORS.teal, fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
+                  @{club.handle}
+                </span>
+                <span style={{ opacity: 0.5, fontSize: 11 }}>
+                  {club.name}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* How it works */}
+      <div style={{
+        marginTop: 32,
+        padding: 24,
+        background: COLORS.bgSoft,
+        border: `1px solid ${COLORS.hairline}`,
+        borderRadius: 8,
+      }}>
+        <div style={{
+          fontFamily: "'DM Mono', monospace",
+          fontSize: 11,
+          color: COLORS.body,
+          opacity: 0.5,
+          letterSpacing: "0.15em",
+          marginBottom: 16,
+        }}>
+          HOW IT WORKS
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 20 }}>
+          {[
+            { step: "1", title: "Connect", desc: "Link your X account via OAuth" },
+            { step: "2", title: "Interact", desc: "Like, retweet, or reply to club posts" },
+            { step: "3", title: "Sync", desc: 'Click "Sync Now" to pull activity' },
+            { step: "4", title: "Earn", desc: "10 points per qualifying interaction" },
+          ].map((item, i) => (
+            <div key={i} style={{ textAlign: "center" }}>
+              <div style={{
+                width: 32,
+                height: 32,
+                background: `${COLORS.teal}20`,
+                border: `1px solid ${COLORS.teal}40`,
+                borderRadius: "50%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                margin: "0 auto 8px",
+                fontFamily: "'DM Mono', monospace",
+                fontSize: 13,
+                color: COLORS.teal,
+                fontWeight: 700,
+              }}>
+                {item.step}
+              </div>
+              <div style={{ color: "#F2F5EE", fontSize: 14, fontWeight: 500, marginBottom: 4 }}>
+                {item.title}
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.6 }}>
+                {item.desc}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function actionColor(action) {
+  switch (action) {
+    case "like": return COLORS.red;
+    case "retweet": return COLORS.green;
+    case "reply": return COLORS.teal;
+    default: return COLORS.body;
+  }
 }
 
 // ============================================================================
