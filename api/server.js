@@ -15,9 +15,39 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+import crypto from "crypto";
+
 // Configuration
 const JWT_SECRET = process.env.JWT_SECRET || "fofa-prod-secret-key-change-this";
 const DATA_DIR = "/tmp/fofa-data";
+
+// X (Twitter) OAuth 2.0 Configuration
+const TWITTER_CLIENT_ID = process.env.TWITTER_CLIENT_ID || "";
+const TWITTER_CLIENT_SECRET = process.env.TWITTER_CLIENT_SECRET || "";
+const TWITTER_CALLBACK_URL = process.env.TWITTER_CALLBACK_URL || "https://fofa-xi.vercel.app/api/twitter/callback";
+const TWITTER_DEMO_MODE = !TWITTER_CLIENT_ID; // Auto-enable demo when no keys
+
+// Football club X accounts to track interactions with
+const TRACKED_CLUBS = [
+  { handle: "ManUtd", name: "Manchester United", id: "558797310" },
+  { handle: "Arsenal", name: "Arsenal", id: "34613288" },
+  { handle: "LFC", name: "Liverpool FC", id: "19583545" },
+  { handle: "ChelseaFC", name: "Chelsea FC", id: "22910295" },
+  { handle: "ManCity", name: "Manchester City", id: "45733154" },
+  { handle: "SpursOfficial", name: "Tottenham Hotspur", id: "121402638" },
+  { handle: "FCBarcelona", name: "FC Barcelona", id: "15473839" },
+  { handle: "realmadrid", name: "Real Madrid", id: "169897984" },
+  { handle: "BayernMunich", name: "Bayern Munich", id: "784614361" },
+  { handle: "PSG_English", name: "Paris Saint-Germain", id: "25385012" },
+  { handle: "Juventusfc", name: "Juventus", id: "84886695" },
+  { handle: "acmilan", name: "AC Milan", id: "84886695" },
+  { handle: "BVB", name: "Borussia Dortmund", id: "110585741" },
+  { handle: "Inter", name: "Inter Milan", id: "145289938" },
+  { handle: "OfficialASRoma", name: "AS Roma", id: "123456789" },
+];
+
+// Temporary store for OAuth state/PKCE (in production, use Redis or similar)
+const oauthStates = new Map();
 
 // In-memory database (persists during function execution)
 let db = {
@@ -593,6 +623,466 @@ app.get("/api/loyalty/activities", authenticateToken, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ============================================================================
+// X (TWITTER) OAUTH 2.0 ROUTES
+// ============================================================================
+
+/**
+ * GET /api/twitter/status
+ * Check if user has connected their X account.
+ */
+app.get("/api/twitter/status", authenticateToken, async (req, res) => {
+  try {
+    const user = db.users[req.user.userId];
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const connected = !!user.twitter_access_token;
+    res.json({
+      connected,
+      twitter_username: user.twitter_username || null,
+      twitter_name: user.twitter_display_name || null,
+      last_synced: user.twitter_last_synced || null,
+      demo_mode: TWITTER_DEMO_MODE,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/twitter/auth
+ * Start X OAuth 2.0 PKCE flow — redirect user to X authorization page.
+ * Pass ?token=JWT in query so we know who's authenticating.
+ */
+app.get("/api/twitter/auth", async (req, res) => {
+  try {
+    const jwtToken = req.query.token;
+    if (!jwtToken) return res.status(400).json({ error: "Missing token parameter" });
+
+    if (TWITTER_DEMO_MODE) {
+      // In demo mode, simulate a successful connection
+      const decoded = jwt.verify(jwtToken, JWT_SECRET);
+      const user = db.users[decoded.userId];
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      user.twitter_access_token = "demo_token";
+      user.twitter_username = "demo_fan";
+      user.twitter_display_name = "Demo Fan";
+      user.twitter_connected_at = new Date().toISOString();
+      saveDatabase();
+
+      // Redirect back to the portal
+      const baseUrl = process.env.VITE_APP_URL || "https://fofa-xi.vercel.app";
+      return res.redirect(`${baseUrl}/#portal?twitter=connected`);
+    }
+
+    // Real OAuth 2.0 PKCE flow
+    const state = crypto.randomBytes(16).toString("hex");
+    const codeVerifier = crypto.randomBytes(32).toString("base64url");
+    const codeChallenge = crypto
+      .createHash("sha256")
+      .update(codeVerifier)
+      .digest("base64url");
+
+    // Store state → { codeVerifier, jwtToken } for callback
+    oauthStates.set(state, { codeVerifier, jwtToken, createdAt: Date.now() });
+
+    // Clean up old states (>10 min)
+    for (const [k, v] of oauthStates) {
+      if (Date.now() - v.createdAt > 600000) oauthStates.delete(k);
+    }
+
+    const scopes = [
+      "tweet.read",
+      "users.read",
+      "like.read",
+      "offline.access",
+    ].join("%20");
+
+    const authUrl =
+      `https://twitter.com/i/oauth2/authorize` +
+      `?response_type=code` +
+      `&client_id=${TWITTER_CLIENT_ID}` +
+      `&redirect_uri=${encodeURIComponent(TWITTER_CALLBACK_URL)}` +
+      `&scope=${scopes}` +
+      `&state=${state}` +
+      `&code_challenge=${codeChallenge}` +
+      `&code_challenge_method=S256`;
+
+    res.redirect(authUrl);
+  } catch (error) {
+    console.error("Twitter auth error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/twitter/callback
+ * Handle the redirect back from X. Exchange code for access token.
+ */
+app.get("/api/twitter/callback", async (req, res) => {
+  try {
+    const { code, state } = req.query;
+    const baseUrl = process.env.VITE_APP_URL || "https://fofa-xi.vercel.app";
+
+    if (!code || !state || !oauthStates.has(state)) {
+      return res.redirect(`${baseUrl}/#portal?twitter=error`);
+    }
+
+    const { codeVerifier, jwtToken } = oauthStates.get(state);
+    oauthStates.delete(state);
+
+    // Exchange code for token
+    const tokenRes = await fetch("https://api.twitter.com/2/oauth2/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${Buffer.from(`${TWITTER_CLIENT_ID}:${TWITTER_CLIENT_SECRET}`).toString("base64")}`,
+      },
+      body: new URLSearchParams({
+        code,
+        grant_type: "authorization_code",
+        redirect_uri: TWITTER_CALLBACK_URL,
+        code_verifier: codeVerifier,
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      console.error("Token exchange failed:", await tokenRes.text());
+      return res.redirect(`${baseUrl}/#portal?twitter=error`);
+    }
+
+    const tokenData = await tokenRes.json();
+
+    // Get user info from X
+    const userRes = await fetch("https://api.twitter.com/2/users/me", {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+
+    const userData = userRes.ok ? await userRes.json() : { data: {} };
+
+    // Save to user record
+    const decoded = jwt.verify(jwtToken, JWT_SECRET);
+    const user = db.users[decoded.userId];
+
+    if (user) {
+      user.twitter_access_token = tokenData.access_token;
+      user.twitter_refresh_token = tokenData.refresh_token || null;
+      user.twitter_token_expires = tokenData.expires_in
+        ? Date.now() + tokenData.expires_in * 1000
+        : null;
+      user.twitter_user_id = userData.data?.id || null;
+      user.twitter_username = userData.data?.username || null;
+      user.twitter_display_name = userData.data?.name || null;
+      user.twitter_connected_at = new Date().toISOString();
+      saveDatabase();
+    }
+
+    res.redirect(`${baseUrl}/#portal?twitter=connected`);
+  } catch (error) {
+    console.error("Twitter callback error:", error);
+    const baseUrl = process.env.VITE_APP_URL || "https://fofa-xi.vercel.app";
+    res.redirect(`${baseUrl}/#portal?twitter=error`);
+  }
+});
+
+/**
+ * POST /api/twitter/disconnect
+ * Remove X connection from user account.
+ */
+app.post("/api/twitter/disconnect", authenticateToken, async (req, res) => {
+  try {
+    const user = db.users[req.user.userId];
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    delete user.twitter_access_token;
+    delete user.twitter_refresh_token;
+    delete user.twitter_token_expires;
+    delete user.twitter_user_id;
+    delete user.twitter_username;
+    delete user.twitter_display_name;
+    delete user.twitter_connected_at;
+    delete user.twitter_last_synced;
+    saveDatabase();
+
+    res.json({ message: "X account disconnected" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/twitter/sync
+ * Pull latest X activity and find interactions with tracked club accounts.
+ * Awards 10 points per qualifying interaction (like, retweet, comment).
+ */
+app.post("/api/twitter/sync", authenticateToken, async (req, res) => {
+  try {
+    const user = db.users[req.user.userId];
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    if (!user.twitter_access_token) {
+      return res.status(400).json({ error: "X account not connected" });
+    }
+
+    let clubInteractions = [];
+
+    if (TWITTER_DEMO_MODE || user.twitter_access_token === "demo_token") {
+      // === DEMO MODE: generate simulated club interactions ===
+      const demoActions = ["like", "retweet", "reply"];
+      const sampleClubs = TRACKED_CLUBS.slice(0, 5); // pick first 5 clubs
+      const numInteractions = Math.floor(Math.random() * 4) + 2; // 2-5 interactions
+
+      for (let i = 0; i < numInteractions; i++) {
+        const club = sampleClubs[Math.floor(Math.random() * sampleClubs.length)];
+        const action = demoActions[Math.floor(Math.random() * demoActions.length)];
+        const hoursAgo = Math.floor(Math.random() * 72);
+
+        clubInteractions.push({
+          action,
+          club_handle: `@${club.handle}`,
+          club_name: club.name,
+          tweet_id: `demo_${Date.now()}_${i}`,
+          tweet_preview: generateDemoTweetPreview(club.name, action),
+          created_at: new Date(Date.now() - hoursAgo * 3600000).toISOString(),
+        });
+      }
+    } else {
+      // === REAL MODE: fetch from X API ===
+      // Refresh token if needed
+      if (user.twitter_token_expires && Date.now() > user.twitter_token_expires - 60000) {
+        const refreshed = await refreshTwitterToken(user);
+        if (!refreshed) {
+          return res.status(401).json({ error: "X token expired. Please reconnect." });
+        }
+      }
+
+      // Fetch liked tweets
+      if (user.twitter_user_id) {
+        try {
+          const likesRes = await fetch(
+            `https://api.twitter.com/2/users/${user.twitter_user_id}/liked_tweets?max_results=100&tweet.fields=author_id,created_at,text&expansions=author_id`,
+            { headers: { Authorization: `Bearer ${user.twitter_access_token}` } }
+          );
+          if (likesRes.ok) {
+            const likesData = await likesRes.json();
+            const clubIds = new Set(TRACKED_CLUBS.map(c => c.id));
+            const authorMap = {};
+            (likesData.includes?.users || []).forEach(u => { authorMap[u.id] = u; });
+
+            (likesData.data || []).forEach(tweet => {
+              if (clubIds.has(tweet.author_id)) {
+                const author = authorMap[tweet.author_id];
+                const club = TRACKED_CLUBS.find(c => c.id === tweet.author_id);
+                clubInteractions.push({
+                  action: "like",
+                  club_handle: `@${author?.username || club?.handle || "unknown"}`,
+                  club_name: club?.name || author?.name || "Football Club",
+                  tweet_id: tweet.id,
+                  tweet_preview: (tweet.text || "").slice(0, 120),
+                  created_at: tweet.created_at || new Date().toISOString(),
+                });
+              }
+            });
+          }
+        } catch (e) {
+          console.error("Error fetching likes:", e.message);
+        }
+
+        // Fetch recent tweets (for retweets and replies)
+        try {
+          const tweetsRes = await fetch(
+            `https://api.twitter.com/2/users/${user.twitter_user_id}/tweets?max_results=100&tweet.fields=created_at,text,referenced_tweets,in_reply_to_user_id&expansions=referenced_tweets.id,referenced_tweets.id.author_id`,
+            { headers: { Authorization: `Bearer ${user.twitter_access_token}` } }
+          );
+          if (tweetsRes.ok) {
+            const tweetsData = await tweetsRes.json();
+            const clubIds = new Set(TRACKED_CLUBS.map(c => c.id));
+            const refAuthorMap = {};
+            (tweetsData.includes?.users || []).forEach(u => { refAuthorMap[u.id] = u; });
+
+            (tweetsData.data || []).forEach(tweet => {
+              const refs = tweet.referenced_tweets || [];
+
+              // Check for retweets of club posts
+              const retweet = refs.find(r => r.type === "retweeted");
+              if (retweet) {
+                const refTweets = tweetsData.includes?.tweets || [];
+                const original = refTweets.find(t => t.id === retweet.id);
+                if (original && clubIds.has(original.author_id)) {
+                  const club = TRACKED_CLUBS.find(c => c.id === original.author_id);
+                  clubInteractions.push({
+                    action: "retweet",
+                    club_handle: `@${club?.handle || "unknown"}`,
+                    club_name: club?.name || "Football Club",
+                    tweet_id: tweet.id,
+                    tweet_preview: (original.text || "").slice(0, 120),
+                    created_at: tweet.created_at || new Date().toISOString(),
+                  });
+                }
+              }
+
+              // Check for replies to club accounts
+              const reply = refs.find(r => r.type === "replied_to");
+              if (reply && tweet.in_reply_to_user_id && clubIds.has(tweet.in_reply_to_user_id)) {
+                const club = TRACKED_CLUBS.find(c => c.id === tweet.in_reply_to_user_id);
+                clubInteractions.push({
+                  action: "reply",
+                  club_handle: `@${club?.handle || "unknown"}`,
+                  club_name: club?.name || "Football Club",
+                  tweet_id: tweet.id,
+                  tweet_preview: (tweet.text || "").slice(0, 120),
+                  created_at: tweet.created_at || new Date().toISOString(),
+                });
+              }
+            });
+          }
+        } catch (e) {
+          console.error("Error fetching tweets:", e.message);
+        }
+      }
+    }
+
+    // Deduplicate — don't re-award points for already-synced tweets
+    const existingSyncIds = new Set(
+      db.interactions
+        .filter(i => i.user_id === req.user.userId && i.metadata?.source === "x_sync")
+        .map(i => i.metadata?.tweet_id)
+    );
+
+    const newInteractions = clubInteractions.filter(ci => !existingSyncIds.has(ci.tweet_id));
+
+    // Record each new interaction as a social_media passport stamp
+    const recorded = [];
+    for (const ci of newInteractions) {
+      const txResult = simulateOnChainTx(user.wallet_address, "social_media", {
+        source: "x_sync",
+        ...ci,
+      });
+
+      const interaction = {
+        id: db.nextInteractionId++,
+        user_id: req.user.userId,
+        interaction_type: "social_media",
+        metadata: {
+          source: "x_sync",
+          action: ci.action,
+          club_handle: ci.club_handle,
+          club_name: ci.club_name,
+          tweet_id: ci.tweet_id,
+          tweet_preview: ci.tweet_preview,
+          platform: "X (Twitter)",
+        },
+        points: 10,
+        tx_hash: txResult.txHash,
+        block_number: txResult.blockNumber,
+        network: txResult.network,
+        created_at: ci.created_at,
+      };
+
+      db.interactions.push(interaction);
+      recorded.push(interaction);
+
+      // Also add to legacy activity log
+      db.activities.push({
+        id: db.nextActivityId++,
+        user_id: req.user.userId,
+        activity_type: "community",
+        description: `${ci.action} on @${ci.club_handle.replace("@", "")} post`,
+        points: 10,
+        created_at: ci.created_at,
+      });
+    }
+
+    user.twitter_last_synced = new Date().toISOString();
+    saveDatabase();
+
+    const scores = getUserLoyaltyScores(req.user.userId);
+
+    res.json({
+      message: `Synced ${recorded.length} new interaction(s) from X`,
+      new_interactions: recorded,
+      total_found: clubInteractions.length,
+      already_synced: clubInteractions.length - newInteractions.length,
+      points_earned: recorded.length * 10,
+      loyalty: scores,
+      demo_mode: TWITTER_DEMO_MODE || user.twitter_access_token === "demo_token",
+    });
+  } catch (error) {
+    console.error("Twitter sync error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/twitter/clubs
+ * List the tracked football club accounts.
+ */
+app.get("/api/twitter/clubs", (req, res) => {
+  res.json({
+    clubs: TRACKED_CLUBS.map(c => ({ handle: c.handle, name: c.name })),
+  });
+});
+
+// Helper: refresh X access token
+async function refreshTwitterToken(user) {
+  if (!user.twitter_refresh_token || TWITTER_DEMO_MODE) return false;
+
+  try {
+    const tokenRes = await fetch("https://api.twitter.com/2/oauth2/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${Buffer.from(`${TWITTER_CLIENT_ID}:${TWITTER_CLIENT_SECRET}`).toString("base64")}`,
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: user.twitter_refresh_token,
+      }),
+    });
+
+    if (!tokenRes.ok) return false;
+
+    const tokenData = await tokenRes.json();
+    user.twitter_access_token = tokenData.access_token;
+    user.twitter_refresh_token = tokenData.refresh_token || user.twitter_refresh_token;
+    user.twitter_token_expires = tokenData.expires_in
+      ? Date.now() + tokenData.expires_in * 1000
+      : null;
+    saveDatabase();
+    return true;
+  } catch (e) {
+    console.error("Token refresh failed:", e.message);
+    return false;
+  }
+}
+
+// Helper: generate demo tweet preview text
+function generateDemoTweetPreview(clubName, action) {
+  const previews = {
+    like: [
+      `${clubName} secure a dominant 3-0 victory! What a performance...`,
+      `New signing announcement! Welcome to ${clubName}...`,
+      `Match day! ${clubName} vs rivals — can't wait for this one...`,
+      `${clubName} training session highlights — the squad is looking sharp...`,
+    ],
+    retweet: [
+      `${clubName}: Full time! A brilliant display from the team today...`,
+      `${clubName}: Tickets now available for our next home match...`,
+      `${clubName}: Congratulations to our Player of the Month...`,
+    ],
+    reply: [
+      `Amazing game! ${clubName} deserved the win today...`,
+      `Can't wait for the next match! Come on ${clubName}!...`,
+      `Best team in the league! ${clubName} all the way...`,
+    ],
+  };
+  const options = previews[action] || previews.like;
+  return options[Math.floor(Math.random() * options.length)];
+}
 
 // ============================================================================
 // HEALTH CHECK
