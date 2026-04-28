@@ -306,6 +306,179 @@ export default async function handler(req, res) {
       });
     }
 
+    // ============ ADMIN ENDPOINTS ============
+    // Admin emails - comma separated in env var ADMIN_EMAILS
+    const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "").split(",").map(e => e.trim().toLowerCase()).filter(Boolean);
+    
+    function isAdmin(decoded) {
+      if (!decoded || !decoded.email) return false;
+      return ADMIN_EMAILS.includes(decoded.email.toLowerCase());
+    }
+
+    // Admin: Overview stats
+    if (pathname.endsWith("/admin/overview") && req.method === "GET") {
+      const decoded = verifyToken(req);
+      if (!isAdmin(decoded)) return res.status(403).json({ error: "Forbidden - admin only" });
+
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+      const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      const [
+        totalUsers,
+        totalActivities,
+        signupsToday,
+        signupsYesterday,
+        signupsWeek,
+        activitiesToday,
+        activeUsersToday,
+      ] = await Promise.all([
+        User.countDocuments(),
+        Activity.countDocuments(),
+        User.countDocuments({ created_at: { $gte: today } }),
+        User.countDocuments({ created_at: { $gte: yesterday, $lt: today } }),
+        User.countDocuments({ created_at: { $gte: weekAgo } }),
+        Activity.countDocuments({ created_at: { $gte: today } }),
+        Activity.distinct("user_id", { created_at: { $gte: today } }).then(arr => arr.length),
+      ]);
+
+      // Top fans
+      const topFans = await User.find()
+        .sort({ total_score: -1 })
+        .limit(10)
+        .select("display_name username favorite_club total_score level created_at");
+
+      // Club breakdown
+      const clubAggregation = await User.aggregate([
+        { $match: { favorite_club: { $ne: "" } } },
+        { $group: {
+          _id: "$favorite_club",
+          fans: { $sum: 1 },
+          totalScore: { $sum: "$total_score" },
+        }},
+        { $sort: { fans: -1 } },
+        { $limit: 20 },
+      ]);
+
+      // Activity type breakdown
+      const activityAggregation = await Activity.aggregate([
+        { $group: {
+          _id: "$activity_type",
+          count: { $sum: 1 },
+          totalPoints: { $sum: "$points" },
+        }},
+        { $sort: { count: -1 } },
+      ]);
+
+      // Recent signups
+      const recentSignups = await User.find()
+        .sort({ created_at: -1 })
+        .limit(15)
+        .select("display_name username favorite_club created_at total_score level");
+
+      return res.status(200).json({
+        stats: {
+          total_users: totalUsers,
+          total_activities: totalActivities,
+          signups_today: signupsToday,
+          signups_yesterday: signupsYesterday,
+          signups_week: signupsWeek,
+          activities_today: activitiesToday,
+          active_today: activeUsersToday,
+          dau_percent: totalUsers > 0 ? Math.round((activeUsersToday / totalUsers) * 100) : 0,
+          avg_activities_per_user: totalUsers > 0 ? (totalActivities / totalUsers).toFixed(1) : 0,
+        },
+        top_fans: topFans.map((u, i) => ({
+          rank: i + 1,
+          display_name: u.display_name,
+          username: u.username,
+          favorite_club: u.favorite_club,
+          total_score: u.total_score,
+          level: u.level,
+          joined: u.created_at,
+        })),
+        clubs: clubAggregation.map(c => ({
+          name: c._id,
+          fans: c.fans,
+          total_score: c.totalScore,
+        })),
+        activities: activityAggregation.map(a => ({
+          type: a._id,
+          count: a.count,
+          total_points: a.totalPoints,
+        })),
+        recent_signups: recentSignups.map(u => ({
+          display_name: u.display_name,
+          username: u.username,
+          favorite_club: u.favorite_club,
+          created_at: u.created_at,
+          total_score: u.total_score,
+          level: u.level,
+        })),
+      });
+    }
+
+    // Admin: List all users (with pagination)
+    if (pathname.endsWith("/admin/users") && req.method === "GET") {
+      const decoded = verifyToken(req);
+      if (!isAdmin(decoded)) return res.status(403).json({ error: "Forbidden - admin only" });
+
+      const queryString = url.includes("?") ? url.split("?")[1] : "";
+      const params = new URLSearchParams(queryString);
+      const page = Math.max(1, parseInt(params.get("page") || "1"));
+      const limit = Math.min(parseInt(params.get("limit") || "50"), 200);
+      const search = params.get("search") || "";
+      const club = params.get("club") || "";
+
+      const query = {};
+      if (search) {
+        query.$or = [
+          { display_name: { $regex: search, $options: "i" } },
+          { username: { $regex: search, $options: "i" } },
+          { email: { $regex: search, $options: "i" } },
+        ];
+      }
+      if (club) query.favorite_club = club;
+
+      const [users, total] = await Promise.all([
+        User.find(query)
+          .sort({ created_at: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .select("display_name username email favorite_club total_score level created_at"),
+        User.countDocuments(query),
+      ]);
+
+      return res.status(200).json({
+        users: users.map(u => ({
+          id: u._id.toString(),
+          display_name: u.display_name,
+          username: u.username,
+          email: u.email,
+          favorite_club: u.favorite_club,
+          total_score: u.total_score,
+          level: u.level,
+          created_at: u.created_at,
+        })),
+        pagination: {
+          page,
+          limit,
+          total,
+          total_pages: Math.ceil(total / limit),
+        },
+      });
+    }
+
+    // Admin: Check if current user is admin (used by frontend)
+    if (pathname.endsWith("/admin/check") && req.method === "GET") {
+      const decoded = verifyToken(req);
+      return res.status(200).json({
+        is_admin: isAdmin(decoded),
+        admin_emails_configured: ADMIN_EMAILS.length > 0,
+      });
+    }
+
     return res.status(404).json({ error: "Endpoint not found", path: pathname });
   } catch (error) {
     console.error("API error:", error);
