@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import FOFA from './FOFA.jsx'
 import PersonalPortal from './PersonalPortal.jsx'
 import AdminDashboard from './AdminDashboard.jsx'
+import PublicLeaderboard from './PublicLeaderboard.jsx'
 
 function App() {
   const [currentView, setCurrentView] = useState('site')
@@ -14,6 +15,8 @@ function App() {
         setCurrentView('portal')
       } else if (hash === '#admin') {
         setCurrentView('admin')
+      } else if (hash === '#leaders' || hash === '#leaderboard') {
+        setCurrentView('leaders')
       } else {
         setCurrentView('site')
       }
@@ -29,6 +32,7 @@ function App() {
       {currentView === 'site' && <FOFA />}
       {currentView === 'portal' && <PersonalPortal />}
       {currentView === 'admin' && <AdminDashboard />}
+      {currentView === 'leaders' && <PublicLeaderboard />}
     </>
   )
 }
