@@ -1,3 +1,4 @@
+
 // ============================================================================
 // FOFA API - DEBUG VERSION (shows MongoDB connection errors)
 // ============================================================================
@@ -174,8 +175,19 @@ export default async function handler(req, res) {
         email: email.toLowerCase(), password: hashedPassword, username: username.toLowerCase(),
         display_name: display_name || username, favorite_club: favorite_club || "",
       });
+      
+      // 🎉 Welcome bonus: +50 points to engagement
+      await Activity.create({
+        user_id: user._id,
+        activity_type: "engagement",
+        description: "Welcome to FOFA! 🎉",
+        points: 50,
+      });
+      await recalculateUserScores(user._id);
+      
       const token = jwt.sign({ userId: user._id.toString(), email: user.email, username: user.username }, JWT_SECRET, { expiresIn: "30d" });
-      return res.status(201).json({ message: "User registered successfully", token, user: userToPublic(user) });
+      const updatedUser = await User.findById(user._id);
+      return res.status(201).json({ message: "User registered successfully", token, user: userToPublic(updatedUser), is_new_user: true });
     }
 
     if (pathname.endsWith("/auth/login") && req.method === "POST") {
