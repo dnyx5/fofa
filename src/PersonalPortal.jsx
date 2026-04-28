@@ -37,7 +37,13 @@ export default function PersonalPortal() {
       fetchUserProfile();
     } else {
       setInitialLoading(false);
-      setCurrentView("landing");
+      // If they came via referral link, show register view directly
+      const hash = window.location.hash;
+      if (hash.startsWith("#join") && hash.includes("ref=")) {
+        setCurrentView("register");
+      } else {
+        setCurrentView("landing");
+      }
     }
   }, []);
 
@@ -671,6 +677,31 @@ function AuthForm({ type, onSuccess, onError, onSwitchView }) {
   const [touched, setTouched] = useState({});
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [referralCode, setReferralCode] = useState("");
+  const [referrer, setReferrer] = useState(null);
+
+  // Read referral code from URL on mount (and validate it)
+  useEffect(() => {
+    if (type !== "register") return;
+    const hash = window.location.hash;
+    const queryStart = hash.indexOf("?");
+    if (queryStart === -1) return;
+    const params = new URLSearchParams(hash.slice(queryStart + 1));
+    const ref = params.get("ref");
+    if (!ref) return;
+    
+    setReferralCode(ref.toUpperCase());
+    
+    // Validate the code
+    fetch(`${API_URL}/referrals/validate?code=${encodeURIComponent(ref)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.valid && data.referrer) {
+          setReferrer(data.referrer);
+        }
+      })
+      .catch(() => {});
+  }, [type]);
 
   // Validation
   function validate(field, value) {
@@ -761,7 +792,7 @@ function AuthForm({ type, onSuccess, onError, onSwitchView }) {
       const endpoint = type === "login" ? "/auth/login" : "/auth/register";
       const body = type === "login"
         ? { email: formData.email, password: formData.password }
-        : formData;
+        : { ...formData, ...(referralCode ? { referral_code: referralCode } : {}) };
 
       const response = await fetch(`${API_URL}${endpoint}`, {
         method: "POST",
@@ -816,6 +847,33 @@ function AuthForm({ type, onSuccess, onError, onSwitchView }) {
       </div>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        {type === "register" && referrer && (
+          <div style={{
+            background: COLORS.greenGlow,
+            border: `1px solid ${COLORS.green}`,
+            borderRadius: 4,
+            padding: 16,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+          }}>
+            <div style={{ fontSize: 28 }}>🎁</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontSize: 11,
+                fontFamily: "'DM Mono', monospace",
+                color: COLORS.green,
+                letterSpacing: "0.15em",
+                marginBottom: 4,
+              }}>
+                — REFERRED BY @{referrer.username.toUpperCase()}
+              </div>
+              <div style={{ color: "#F2F5EE", fontSize: 14 }}>
+                {referrer.display_name} invited you to FOFA. You'll get <strong style={{ color: COLORS.green }}>+25 bonus points</strong> on signup!
+              </div>
+            </div>
+          </div>
+        )}
         {type === "register" && (
           <>
             <FormField
@@ -1058,6 +1116,7 @@ function Dashboard({ user, token, onProfileUpdate, showToast }) {
   const tabs = [
     { id: "passport", label: "Passport" },
     { id: "leaderboard", label: "🏆 Leaderboard" },
+    { id: "referrals", label: "🎁 Refer Friends" },
     { id: "activities", label: "Record Activity" },
     { id: "history", label: "History" },
     { id: "profile", label: "Profile" },
@@ -1106,6 +1165,9 @@ function Dashboard({ user, token, onProfileUpdate, showToast }) {
         )}
         {activeTab === "leaderboard" && (
           <LeaderboardTab token={token} user={user} showToast={showToast} />
+        )}
+        {activeTab === "referrals" && (
+          <ReferralsTab token={token} user={user} showToast={showToast} />
         )}
         {activeTab === "activities" && (
           <ActivitiesTab
@@ -2935,6 +2997,451 @@ function OnboardingCard({ icon, subtitle, title, description, highlight, customC
           Skip
         </button>
       </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// REFERRALS TAB
+// ============================================================================
+
+function ReferralsTab({ token, user, showToast }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+
+  useEffect(() => {
+    fetchReferralData();
+  }, []);
+
+  async function fetchReferralData() {
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/referrals/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error("Failed to load");
+      const result = await response.json();
+      setData(result);
+    } catch (err) {
+      showToast("Could not load referral data", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function copyToClipboard(text, type) {
+    navigator.clipboard.writeText(text).then(() => {
+      if (type === "link") {
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 2000);
+      } else {
+        setCopiedCode(true);
+        setTimeout(() => setCopiedCode(false), 2000);
+      }
+      showToast("Copied to clipboard! 📋", "success");
+    }).catch(() => {
+      showToast("Could not copy. Try long-press to copy.", "error");
+    });
+  }
+
+  function shareNative() {
+    if (!data) return;
+    if (navigator.share) {
+      navigator.share({
+        title: "Join me on FOFA",
+        text: `I'm competing on FOFA — the football fan loyalty platform. Join me and let's compete for the Ultimate Football Experience!`,
+        url: data.referral_link,
+      }).catch(() => {});
+    } else {
+      copyToClipboard(data.referral_link, "link");
+    }
+  }
+
+  if (loading) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {[1, 2, 3].map(i => <Skeleton key={i} height={120} />)}
+      </div>
+    );
+  }
+
+  if (!data) {
+    return <div style={{ color: COLORS.body, opacity: 0.6 }}>Could not load referral data.</div>;
+  }
+
+  return (
+    <div style={{ maxWidth: 800 }}>
+      {/* Header */}
+      <div style={{ marginBottom: 32 }}>
+        <div style={{
+          fontSize: 11,
+          fontFamily: "'DM Mono', monospace",
+          color: COLORS.gold,
+          letterSpacing: "0.25em",
+          marginBottom: 12,
+        }}>
+          — REFER FRIENDS, EARN POINTS
+        </div>
+        <h2 style={{
+          color: "#F2F5EE",
+          fontFamily: "'Barlow Condensed', sans-serif",
+          fontSize: "clamp(28px, 5vw, 40px)",
+          fontWeight: 900,
+          margin: "0 0 8px",
+          letterSpacing: "-0.01em",
+        }}>
+          Your Referral Hub
+        </h2>
+        <p style={{ color: COLORS.body, opacity: 0.7, margin: 0 }}>
+          Earn <strong style={{ color: COLORS.green }}>+50 growth points</strong> for every fan you bring in. They get +25 bonus points too.
+        </p>
+      </div>
+
+      {/* Stats Cards */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(3, 1fr)",
+        gap: 12,
+        marginBottom: 32,
+      }} className="referral-stats">
+        <style>{`
+          @media (max-width: 600px) {
+            .referral-stats { grid-template-columns: 1fr !important; }
+          }
+        `}</style>
+        <div style={{
+          background: COLORS.bgSoft,
+          border: `1px solid ${COLORS.hairline}`,
+          borderRadius: 4,
+          padding: 20,
+          textAlign: "center",
+        }}>
+          <div style={{
+            fontSize: 36,
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontWeight: 900,
+            color: COLORS.green,
+            lineHeight: 1,
+            marginBottom: 6,
+          }}>
+            {data.referral_count}
+          </div>
+          <div style={{
+            fontSize: 11,
+            fontFamily: "'DM Mono', monospace",
+            color: COLORS.body,
+            opacity: 0.7,
+            letterSpacing: "0.15em",
+            textTransform: "uppercase",
+          }}>
+            Friends Referred
+          </div>
+        </div>
+        <div style={{
+          background: COLORS.bgSoft,
+          border: `1px solid ${COLORS.hairline}`,
+          borderRadius: 4,
+          padding: 20,
+          textAlign: "center",
+        }}>
+          <div style={{
+            fontSize: 36,
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontWeight: 900,
+            color: COLORS.gold,
+            lineHeight: 1,
+            marginBottom: 6,
+          }}>
+            {data.points_earned}
+          </div>
+          <div style={{
+            fontSize: 11,
+            fontFamily: "'DM Mono', monospace",
+            color: COLORS.body,
+            opacity: 0.7,
+            letterSpacing: "0.15em",
+            textTransform: "uppercase",
+          }}>
+            Points Earned
+          </div>
+        </div>
+        <div style={{
+          background: COLORS.bgSoft,
+          border: `1px solid ${COLORS.hairline}`,
+          borderRadius: 4,
+          padding: 20,
+          textAlign: "center",
+        }}>
+          <div style={{
+            fontSize: 36,
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontWeight: 900,
+            color: "#F2F5EE",
+            lineHeight: 1,
+            marginBottom: 6,
+          }}>
+            #{data.recruiter_rank}
+          </div>
+          <div style={{
+            fontSize: 11,
+            fontFamily: "'DM Mono', monospace",
+            color: COLORS.body,
+            opacity: 0.7,
+            letterSpacing: "0.15em",
+            textTransform: "uppercase",
+          }}>
+            Recruiter Rank
+          </div>
+        </div>
+      </div>
+
+      {/* Share Section */}
+      <div style={{
+        background: `linear-gradient(135deg, ${COLORS.bgCard} 0%, ${COLORS.bgSoft} 100%)`,
+        border: `1px solid ${COLORS.green}`,
+        borderRadius: 8,
+        padding: 24,
+        marginBottom: 32,
+        boxShadow: `0 0 40px ${COLORS.greenGlow}`,
+      }}>
+        <div style={{
+          fontSize: 11,
+          fontFamily: "'DM Mono', monospace",
+          color: COLORS.green,
+          letterSpacing: "0.2em",
+          marginBottom: 16,
+        }}>
+          ⚡ YOUR REFERRAL LINK
+        </div>
+
+        {/* Referral Code */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{
+            fontSize: 10,
+            fontFamily: "'DM Mono', monospace",
+            color: COLORS.body,
+            opacity: 0.6,
+            letterSpacing: "0.15em",
+            marginBottom: 6,
+          }}>
+            CODE
+          </div>
+          <div
+            onClick={() => copyToClipboard(data.referral_code, "code")}
+            style={{
+              background: COLORS.bg,
+              border: `1px solid ${COLORS.hairline}`,
+              borderRadius: 4,
+              padding: "12px 16px",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              transition: "all 0.2s",
+            }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = COLORS.green}
+            onMouseLeave={e => e.currentTarget.style.borderColor = COLORS.hairline}
+          >
+            <code style={{
+              fontFamily: "'DM Mono', monospace",
+              fontSize: 14,
+              color: COLORS.green,
+              letterSpacing: "0.05em",
+              wordBreak: "break-all",
+              flex: 1,
+            }}>
+              {data.referral_code}
+            </code>
+            <span style={{
+              fontSize: 10,
+              fontFamily: "'DM Mono', monospace",
+              color: copiedCode ? COLORS.green : COLORS.body,
+              opacity: copiedCode ? 1 : 0.6,
+              letterSpacing: "0.15em",
+              flexShrink: 0,
+            }}>
+              {copiedCode ? "✓ COPIED" : "TAP TO COPY"}
+            </span>
+          </div>
+        </div>
+
+        {/* Referral Link */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{
+            fontSize: 10,
+            fontFamily: "'DM Mono', monospace",
+            color: COLORS.body,
+            opacity: 0.6,
+            letterSpacing: "0.15em",
+            marginBottom: 6,
+          }}>
+            SHARE LINK
+          </div>
+          <div
+            onClick={() => copyToClipboard(data.referral_link, "link")}
+            style={{
+              background: COLORS.bg,
+              border: `1px solid ${COLORS.hairline}`,
+              borderRadius: 4,
+              padding: "12px 16px",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              transition: "all 0.2s",
+            }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = COLORS.green}
+            onMouseLeave={e => e.currentTarget.style.borderColor = COLORS.hairline}
+          >
+            <code style={{
+              fontFamily: "'DM Mono', monospace",
+              fontSize: 12,
+              color: "#F2F5EE",
+              letterSpacing: "0.02em",
+              wordBreak: "break-all",
+              flex: 1,
+            }}>
+              {data.referral_link}
+            </code>
+            <span style={{
+              fontSize: 10,
+              fontFamily: "'DM Mono', monospace",
+              color: copiedLink ? COLORS.green : COLORS.body,
+              opacity: copiedLink ? 1 : 0.6,
+              letterSpacing: "0.15em",
+              flexShrink: 0,
+            }}>
+              {copiedLink ? "✓ COPIED" : "TAP TO COPY"}
+            </span>
+          </div>
+        </div>
+
+        {/* Share Button */}
+        <button
+          onClick={shareNative}
+          style={{
+            width: "100%",
+            background: COLORS.green,
+            color: COLORS.bg,
+            border: "none",
+            padding: "14px 24px",
+            fontFamily: "'DM Mono', monospace",
+            fontSize: 13,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            fontWeight: 700,
+            borderRadius: 4,
+            cursor: "pointer",
+            transition: "all 0.2s",
+          }}
+          onMouseEnter={(e) => e.target.style.background = "#2dff82"}
+          onMouseLeave={(e) => e.target.style.background = COLORS.green}
+        >
+          🚀 Share with Friends
+        </button>
+      </div>
+
+      {/* Referred Users List */}
+      {data.referred_users && data.referred_users.length > 0 ? (
+        <div>
+          <div style={{
+            fontSize: 11,
+            fontFamily: "'DM Mono', monospace",
+            color: COLORS.gold,
+            letterSpacing: "0.2em",
+            marginBottom: 16,
+          }}>
+            👥 FANS YOU BROUGHT IN ({data.referred_users.length})
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {data.referred_users.map((u, i) => {
+              const initials = u.display_name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase();
+              return (
+                <div
+                  key={u.username}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "12px 16px",
+                    background: COLORS.bgSoft,
+                    border: `1px solid ${COLORS.hairline}`,
+                    borderRadius: 4,
+                    opacity: 0,
+                    animation: `fadeIn 0.3s ease-out ${i * 0.05}s forwards`,
+                  }}
+                >
+                  <div style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    background: COLORS.bg,
+                    border: `1px solid ${COLORS.hairline}`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 12,
+                    fontFamily: "'Barlow Condensed', sans-serif",
+                    fontWeight: 900,
+                    color: COLORS.body,
+                    flexShrink: 0,
+                  }}>
+                    {initials}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ color: "#F2F5EE", fontSize: 14, marginBottom: 2 }}>
+                      {u.display_name}
+                    </div>
+                    <div style={{
+                      fontSize: 10,
+                      fontFamily: "'DM Mono', monospace",
+                      color: COLORS.body,
+                      opacity: 0.6,
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                    }}>
+                      {u.level} {u.favorite_club && `· ${u.favorite_club}`}
+                    </div>
+                  </div>
+                  <div style={{
+                    fontSize: 14,
+                    fontFamily: "'Barlow Condensed', sans-serif",
+                    fontWeight: 700,
+                    color: COLORS.green,
+                  }}>
+                    +50
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div style={{
+          textAlign: "center",
+          padding: "40px 20px",
+          background: COLORS.bgSoft,
+          border: `1px dashed ${COLORS.hairline}`,
+          borderRadius: 4,
+        }}>
+          <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.4 }}>🎁</div>
+          <div style={{
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontSize: 18,
+            color: "#F2F5EE",
+            marginBottom: 6,
+          }}>
+            No referrals yet
+          </div>
+          <div style={{ color: COLORS.body, opacity: 0.6, fontSize: 13 }}>
+            Share your link to start earning growth points!
+          </div>
+        </div>
+      )}
     </div>
   );
 }
