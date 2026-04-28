@@ -72,12 +72,16 @@ export default function PersonalPortal() {
     showToast("Signed out successfully", "success");
   }
 
-  function handleAuthSuccess(newToken, newUser, message) {
+  function handleAuthSuccess(newToken, newUser, message, isNewUser = false) {
     setToken(newToken);
     localStorage.setItem("fofaToken", newToken);
     setUser(newUser);
-    setCurrentView("portal");
-    showToast(message, "success");
+    if (isNewUser) {
+      setCurrentView("onboarding");
+    } else {
+      setCurrentView("portal");
+      showToast(message, "success");
+    }
   }
 
   // Initial loading screen
@@ -152,9 +156,20 @@ export default function PersonalPortal() {
         {currentView === "register" && (
           <AuthForm
             type="register"
-            onSuccess={(token, user) => handleAuthSuccess(token, user, `Welcome to FOFA, ${user.display_name}! 🎉`)}
+            onSuccess={(token, user, isNew) => handleAuthSuccess(token, user, `Welcome to FOFA, ${user.display_name}! 🎉`, isNew)}
             onError={(msg) => showToast(msg, "error")}
             onSwitchView={() => setCurrentView("login")}
+          />
+        )}
+        {currentView === "onboarding" && user && (
+          <OnboardingFlow
+            user={user}
+            token={token}
+            onComplete={() => {
+              setCurrentView("portal");
+              fetchUserProfile();
+            }}
+            showToast={showToast}
           />
         )}
         {currentView === "portal" && user && (
@@ -760,7 +775,7 @@ function AuthForm({ type, onSuccess, onError, onSwitchView }) {
         throw new Error(data.error || "Something went wrong");
       }
 
-      onSuccess(data.token, data.user);
+      onSuccess(data.token, data.user, data.is_new_user || false);
     } catch (err) {
       let message = err.message;
       if (message.includes("already exists")) {
@@ -2373,6 +2388,553 @@ function LeaderboardTab({ token, user, showToast }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================================
+// ONBOARDING FLOW
+// ============================================================================
+
+function OnboardingFlow({ user, token, onComplete, showToast }) {
+  const [step, setStep] = useState(0); // 0: welcome, 1: tour-1, 2: tour-2, 3: tour-3, 4: first-activity, 5: complete
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
+
+  useEffect(() => {
+    if (step === 0) {
+      setShowConfetti(true);
+      // Auto-advance from welcome screen after 3.5 seconds
+      const timer = setTimeout(() => {
+        setShowConfetti(false);
+        setStep(1);
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [step]);
+
+  async function handleSubmitReason() {
+    if (!reason.trim()) {
+      showToast("Tell us a bit about yourself!", "error");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const response = await fetch(`${API_URL}/loyalty/activity`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          activity_type: "passion",
+          description: `Why I joined FOFA: ${reason.trim()}`,
+          points: 25,
+        }),
+      });
+
+      if (!response.ok) throw new Error("Failed to log");
+      
+      setStep(5);
+      setTimeout(() => {
+        onComplete();
+        showToast("Welcome to FOFA! +75 points earned 🎉", "success");
+      }, 2000);
+    } catch (err) {
+      showToast("Something went wrong. Try again.", "error");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function skipOnboarding() {
+    onComplete();
+    showToast("You can complete your profile anytime", "info");
+  }
+
+  // Confetti pieces
+  const confettiColors = [COLORS.green, COLORS.gold, COLORS.teal, "#FFFFFF"];
+  const confettiPieces = Array.from({ length: 50 }, (_, i) => ({
+    id: i,
+    color: confettiColors[i % confettiColors.length],
+    left: Math.random() * 100,
+    delay: Math.random() * 0.5,
+    duration: 2 + Math.random() * 2,
+    size: 6 + Math.random() * 8,
+  }));
+
+  return (
+    <div style={{
+      maxWidth: 600,
+      margin: "0 auto",
+      padding: "60px 20px",
+      minHeight: "70vh",
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "center",
+      position: "relative",
+    }}>
+      {/* Confetti */}
+      {showConfetti && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          pointerEvents: "none",
+          overflow: "hidden",
+          zIndex: 100,
+        }}>
+          <style>{`
+            @keyframes confettiFall {
+              0% { transform: translateY(-100vh) rotate(0deg); opacity: 1; }
+              100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+            }
+          `}</style>
+          {confettiPieces.map(piece => (
+            <div
+              key={piece.id}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: `${piece.left}%`,
+                width: piece.size,
+                height: piece.size,
+                background: piece.color,
+                borderRadius: piece.id % 3 === 0 ? "50%" : "2px",
+                animation: `confettiFall ${piece.duration}s ease-in ${piece.delay}s forwards`,
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Step Indicator (except for welcome) */}
+      {step > 0 && step < 5 && (
+        <div style={{
+          display: "flex",
+          gap: 8,
+          justifyContent: "center",
+          marginBottom: 40,
+        }}>
+          {[1, 2, 3, 4].map(s => (
+            <div
+              key={s}
+              style={{
+                width: 32,
+                height: 4,
+                borderRadius: 2,
+                background: step >= s ? COLORS.green : COLORS.hairline,
+                transition: "background 0.3s",
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Step 0: Welcome Splash */}
+      {step === 0 && (
+        <div style={{
+          textAlign: "center",
+          opacity: 0,
+          animation: "fadeIn 0.6s ease-out forwards",
+        }}>
+          <div style={{
+            fontSize: 80,
+            marginBottom: 24,
+            animation: "pulse 2s ease-in-out infinite",
+          }}>
+            🎉
+          </div>
+          <div style={{
+            fontSize: 11,
+            fontFamily: "'DM Mono', monospace",
+            color: COLORS.gold,
+            letterSpacing: "0.25em",
+            marginBottom: 16,
+          }}>
+            — WELCOME TO FOFA
+          </div>
+          <h1 style={{
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontSize: "clamp(40px, 9vw, 72px)",
+            fontWeight: 900,
+            color: "#F2F5EE",
+            margin: "0 0 16px",
+            letterSpacing: "-0.02em",
+            lineHeight: 1.05,
+          }}>
+            Hey<br/>
+            <span style={{ color: COLORS.green }}>{user.display_name}!</span>
+          </h1>
+          <div style={{
+            display: "inline-block",
+            padding: "12px 24px",
+            background: COLORS.greenGlow,
+            border: `1px solid ${COLORS.green}`,
+            borderRadius: 4,
+            marginTop: 16,
+            marginBottom: 24,
+          }}>
+            <div style={{
+              fontSize: 32,
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontWeight: 900,
+              color: COLORS.green,
+              lineHeight: 1,
+            }}>
+              +50 POINTS
+            </div>
+            <div style={{
+              fontSize: 10,
+              fontFamily: "'DM Mono', monospace",
+              color: COLORS.body,
+              letterSpacing: "0.2em",
+              marginTop: 4,
+            }}>
+              WELCOME BONUS
+            </div>
+          </div>
+          <p style={{
+            color: COLORS.body,
+            opacity: 0.7,
+            margin: 0,
+            fontSize: 16,
+          }}>
+            Your FOFA Passport is ready...
+          </p>
+        </div>
+      )}
+
+      {/* Step 1: Tour - Passport */}
+      {step === 1 && (
+        <OnboardingCard
+          icon="🛂"
+          subtitle="STEP 1 OF 4"
+          title="This is your Passport"
+          description="Your FOFA Passport is your decentralised identity in the football world. It travels with you, recording your loyalty across clubs and time."
+          highlight="No registration fees. No barriers. Built for true fans."
+          onNext={() => setStep(2)}
+          onSkip={skipOnboarding}
+        />
+      )}
+
+      {/* Step 2: Tour - Earn Points */}
+      {step === 2 && (
+        <OnboardingCard
+          icon="⚽"
+          subtitle="STEP 2 OF 4"
+          title="Earn points 6 ways"
+          description="Score loyalty points across six dimensions: engagement, passion, knowledge, consistency, community, and growth."
+          customContent={
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, 1fr)",
+              gap: 8,
+              marginTop: 20,
+              marginBottom: 20,
+            }}>
+              {[
+                { label: "Engagement", icon: "◆" },
+                { label: "Passion", icon: "♦" },
+                { label: "Knowledge", icon: "◇" },
+                { label: "Consistency", icon: "◈" },
+                { label: "Community", icon: "⬡" },
+                { label: "Growth", icon: "△" },
+              ].map(d => (
+                <div key={d.label} style={{
+                  background: COLORS.bg,
+                  padding: 12,
+                  borderRadius: 4,
+                  border: `1px solid ${COLORS.hairline}`,
+                  textAlign: "center",
+                }}>
+                  <div style={{ color: COLORS.green, fontSize: 16, marginBottom: 4 }}>{d.icon}</div>
+                  <div style={{
+                    fontSize: 10,
+                    fontFamily: "'DM Mono', monospace",
+                    color: COLORS.body,
+                    opacity: 0.8,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                  }}>
+                    {d.label}
+                  </div>
+                </div>
+              ))}
+            </div>
+          }
+          onNext={() => setStep(3)}
+          onSkip={skipOnboarding}
+        />
+      )}
+
+      {/* Step 3: Tour - Compete */}
+      {step === 3 && (
+        <OnboardingCard
+          icon="🏆"
+          subtitle="STEP 3 OF 4"
+          title="Climb the leaderboard"
+          description="The most loyal fan wins the Ultimate Football Experience — including a 424pass package, partner club VIP weekend, and exclusive memorabilia."
+          customContent={
+            <div style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              marginTop: 20,
+            }}>
+              {[
+                { rank: "🥇", label: "Grand Prize: 424pass Experience", color: COLORS.gold },
+                { rank: "🥈", label: "Partner Club VIP Weekend", color: "#C0C0C0" },
+                { rank: "🥉", label: "Signed Memorabilia Bundle", color: "#CD7F32" },
+              ].map((p, i) => (
+                <div key={i} style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: 10,
+                  background: COLORS.bg,
+                  borderRadius: 4,
+                  border: `1px solid ${COLORS.hairline}`,
+                }}>
+                  <span style={{ fontSize: 18 }}>{p.rank}</span>
+                  <span style={{ fontSize: 13, color: "#F2F5EE", flex: 1 }}>{p.label}</span>
+                </div>
+              ))}
+            </div>
+          }
+          onNext={() => setStep(4)}
+          onSkip={skipOnboarding}
+        />
+      )}
+
+      {/* Step 4: First Activity */}
+      {step === 4 && (
+        <div style={{
+          opacity: 0,
+          animation: "fadeIn 0.4s ease-out forwards",
+        }}>
+          <div style={{ textAlign: "center", marginBottom: 32 }}>
+            <div style={{ fontSize: 56, marginBottom: 16 }}>💚</div>
+            <div style={{
+              fontSize: 11,
+              fontFamily: "'DM Mono', monospace",
+              color: COLORS.gold,
+              letterSpacing: "0.25em",
+              marginBottom: 12,
+            }}>
+              STEP 4 OF 4
+            </div>
+            <h2 style={{
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontSize: "clamp(28px, 6vw, 40px)",
+              fontWeight: 900,
+              color: "#F2F5EE",
+              margin: "0 0 12px",
+              letterSpacing: "-0.01em",
+            }}>
+              Why did you join <span style={{ color: COLORS.green }}>FOFA</span>?
+            </h2>
+            <p style={{
+              color: COLORS.body,
+              opacity: 0.7,
+              margin: 0,
+              fontSize: 15,
+            }}>
+              Tell us your story. Earn <span style={{ color: COLORS.green, fontWeight: 700 }}>+25 points</span>.
+            </p>
+          </div>
+
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="My grandfather took me to my first match when I was 8..."
+            autoFocus
+            style={{
+              width: "100%",
+              minHeight: 120,
+              padding: 16,
+              fontSize: 16,
+              resize: "vertical",
+              marginBottom: 16,
+            }}
+          />
+
+          <div style={{
+            fontSize: 11,
+            fontFamily: "'DM Mono', monospace",
+            color: COLORS.body,
+            opacity: 0.5,
+            marginBottom: 24,
+            textAlign: "right",
+            letterSpacing: "0.05em",
+          }}>
+            {reason.length}/500
+          </div>
+
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <button
+              className="btn-primary"
+              onClick={handleSubmitReason}
+              disabled={submitting || !reason.trim()}
+              style={{ flex: 1, minWidth: 200 }}
+            >
+              {submitting ? (
+                <span style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center" }}>
+                  <LoadingSpinner size={14} color={COLORS.bg} />
+                  Saving...
+                </span>
+              ) : (
+                "Complete Setup (+25)"
+              )}
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={skipOnboarding}
+              style={{ minWidth: 100 }}
+            >
+              Skip
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 5: Complete */}
+      {step === 5 && (
+        <div style={{
+          textAlign: "center",
+          opacity: 0,
+          animation: "fadeIn 0.4s ease-out forwards",
+        }}>
+          <div style={{
+            fontSize: 80,
+            marginBottom: 24,
+            animation: "pulse 1s ease-in-out 2",
+          }}>
+            🚀
+          </div>
+          <h2 style={{
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontSize: "clamp(32px, 7vw, 48px)",
+            fontWeight: 900,
+            color: COLORS.green,
+            margin: "0 0 16px",
+          }}>
+            You're all set!
+          </h2>
+          <div style={{
+            fontSize: 36,
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontWeight: 900,
+            color: "#F2F5EE",
+            marginBottom: 8,
+          }}>
+            75 POINTS EARNED
+          </div>
+          <p style={{
+            color: COLORS.body,
+            opacity: 0.7,
+            margin: 0,
+            fontSize: 14,
+          }}>
+            Loading your dashboard...
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// ONBOARDING CARD
+// ============================================================================
+
+function OnboardingCard({ icon, subtitle, title, description, highlight, customContent, onNext, onSkip }) {
+  return (
+    <div style={{
+      opacity: 0,
+      animation: "fadeIn 0.4s ease-out forwards",
+    }}>
+      <div style={{ textAlign: "center", marginBottom: 24 }}>
+        <div style={{
+          fontSize: 56,
+          marginBottom: 16,
+        }}>
+          {icon}
+        </div>
+        <div style={{
+          fontSize: 11,
+          fontFamily: "'DM Mono', monospace",
+          color: COLORS.gold,
+          letterSpacing: "0.25em",
+          marginBottom: 12,
+        }}>
+          — {subtitle}
+        </div>
+        <h2 style={{
+          fontFamily: "'Barlow Condensed', sans-serif",
+          fontSize: "clamp(28px, 6vw, 40px)",
+          fontWeight: 900,
+          color: "#F2F5EE",
+          margin: "0 0 16px",
+          letterSpacing: "-0.01em",
+        }}>
+          {title}
+        </h2>
+      </div>
+
+      <div style={{
+        background: COLORS.bgSoft,
+        border: `1px solid ${COLORS.hairline}`,
+        borderRadius: 4,
+        padding: 24,
+        marginBottom: 24,
+      }}>
+        <p style={{
+          color: COLORS.body,
+          fontSize: 16,
+          lineHeight: 1.6,
+          margin: 0,
+          textAlign: "center",
+        }}>
+          {description}
+        </p>
+        {customContent}
+        {highlight && (
+          <div style={{
+            marginTop: 20,
+            paddingTop: 20,
+            borderTop: `1px solid ${COLORS.hairline}`,
+            textAlign: "center",
+            color: COLORS.green,
+            fontSize: 13,
+            fontFamily: "'DM Mono', monospace",
+            letterSpacing: "0.05em",
+          }}>
+            {highlight}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <button
+          className="btn-primary"
+          onClick={onNext}
+          style={{ flex: 1, minWidth: 200 }}
+        >
+          Continue →
+        </button>
+        <button
+          className="btn-ghost"
+          onClick={onSkip}
+          style={{ minWidth: 100 }}
+        >
+          Skip
+        </button>
+      </div>
     </div>
   );
 }
