@@ -1,4 +1,3 @@
-
 // ============================================================================
 // FOFA API - DEBUG VERSION (shows MongoDB connection errors)
 // ============================================================================
@@ -309,12 +308,30 @@ export default async function handler(req, res) {
     }
 
     if (pathname.endsWith("/stats") && req.method === "GET") {
-      const totalUsers = await User.countDocuments();
-      const totalActivities = await Activity.countDocuments();
-      const topUser = await User.findOne().sort({ total_score: -1 }).select("display_name total_score level");
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      
+      const [totalUsers, totalActivities, topUser, signupsToday, activitiesToday, clubCount] = await Promise.all([
+        User.countDocuments(),
+        Activity.countDocuments(),
+        User.findOne().sort({ total_score: -1 }).select("display_name total_score level favorite_club"),
+        User.countDocuments({ created_at: { $gte: today } }),
+        Activity.countDocuments({ created_at: { $gte: today } }),
+        User.distinct("favorite_club", { favorite_club: { $ne: "" } }).then(arr => arr.length),
+      ]);
+      
       return res.status(200).json({
-        total_users: totalUsers, total_activities: totalActivities,
-        top_user: topUser ? { display_name: topUser.display_name, total_score: topUser.total_score, level: topUser.level } : null,
+        total_users: totalUsers,
+        total_activities: totalActivities,
+        signups_today: signupsToday,
+        activities_today: activitiesToday,
+        clubs_represented: clubCount,
+        top_user: topUser ? {
+          display_name: topUser.display_name,
+          total_score: topUser.total_score,
+          level: topUser.level,
+          favorite_club: topUser.favorite_club,
+        } : null,
       });
     }
 
