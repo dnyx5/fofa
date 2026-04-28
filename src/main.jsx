@@ -2,35 +2,33 @@ import React, { useState, useEffect } from 'react'
 import ReactDOM from 'react-dom/client'
 import FOFA from './FOFA.jsx'
 import PersonalPortal from './PersonalPortal.jsx'
+import AdminDashboard from './AdminDashboard.jsx'
 
 function App() {
   const [currentView, setCurrentView] = useState('site')
 
   useEffect(() => {
-    const hash = window.location.hash
-    if (hash === '#portal') {
-      setCurrentView('portal')
-    } else {
-      setCurrentView('site')
-    }
-
-    const handleHashChange = () => {
-      const newHash = window.location.hash
-      if (newHash === '#portal') {
+    const updateView = () => {
+      const hash = window.location.hash
+      if (hash === '#portal') {
         setCurrentView('portal')
+      } else if (hash === '#admin') {
+        setCurrentView('admin')
       } else {
         setCurrentView('site')
       }
     }
 
-    window.addEventListener('hashchange', handleHashChange)
-    return () => window.removeEventListener('hashchange', handleHashChange)
+    updateView()
+    window.addEventListener('hashchange', updateView)
+    return () => window.removeEventListener('hashchange', updateView)
   }, [])
 
   return (
     <>
       {currentView === 'site' && <FOFA />}
       {currentView === 'portal' && <PersonalPortal />}
+      {currentView === 'admin' && <AdminDashboard />}
     </>
   )
 }
