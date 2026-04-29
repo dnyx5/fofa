@@ -5,6 +5,7 @@ import PersonalPortal from './PersonalPortal.jsx'
 import AdminDashboard from './AdminDashboard.jsx'
 import PublicLeaderboard from './PublicLeaderboard.jsx'
 import ClubApplyForm from './ClubApplyForm.jsx'
+import ClubsPage from './ClubsPage.jsx'
 
 function App() {
   const [currentView, setCurrentView] = useState('site')
@@ -12,7 +13,14 @@ function App() {
   useEffect(() => {
     const updateView = () => {
       const hash = window.location.hash
-      if (hash.startsWith('#join')) {
+      
+      // Routes (order matters - more specific first)
+      if (hash === '#clubs/apply' || hash === '#apply') {
+        setCurrentView('clubs-apply')
+      } else if (hash === '#clubs' || hash.match(/^#clubs\/[a-z0-9-]+$/)) {
+        // #clubs OR #clubs/[slug]
+        setCurrentView('clubs')
+      } else if (hash.startsWith('#join')) {
         setCurrentView('portal')
       } else if (hash === '#portal' || hash.startsWith('#portal?')) {
         setCurrentView('portal')
@@ -20,8 +28,6 @@ function App() {
         setCurrentView('admin')
       } else if (hash === '#leaders' || hash === '#leaderboard') {
         setCurrentView('leaders')
-      } else if (hash === '#clubs/apply' || hash === '#apply') {
-        setCurrentView('clubs-apply')
       } else {
         setCurrentView('site')
       }
@@ -39,6 +45,7 @@ function App() {
       {currentView === 'admin' && <AdminDashboard />}
       {currentView === 'leaders' && <PublicLeaderboard />}
       {currentView === 'clubs-apply' && <ClubApplyForm />}
+      {currentView === 'clubs' && <ClubsPage />}
     </>
   )
 }
