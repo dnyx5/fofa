@@ -4,6 +4,7 @@ import FOFA from './FOFA.jsx'
 import PersonalPortal from './PersonalPortal.jsx'
 import AdminDashboard from './AdminDashboard.jsx'
 import PublicLeaderboard from './PublicLeaderboard.jsx'
+import ClubApplyForm from './ClubApplyForm.jsx'
 
 function App() {
   const [currentView, setCurrentView] = useState('site')
@@ -11,9 +12,7 @@ function App() {
   useEffect(() => {
     const updateView = () => {
       const hash = window.location.hash
-      // #join?ref=CODE goes to portal as register
       if (hash.startsWith('#join')) {
-        // Convert to #portal but keep query params, AuthForm will read ?ref= itself
         setCurrentView('portal')
       } else if (hash === '#portal' || hash.startsWith('#portal?')) {
         setCurrentView('portal')
@@ -21,6 +20,8 @@ function App() {
         setCurrentView('admin')
       } else if (hash === '#leaders' || hash === '#leaderboard') {
         setCurrentView('leaders')
+      } else if (hash === '#clubs/apply' || hash === '#apply') {
+        setCurrentView('clubs-apply')
       } else {
         setCurrentView('site')
       }
@@ -37,6 +38,7 @@ function App() {
       {currentView === 'portal' && <PersonalPortal />}
       {currentView === 'admin' && <AdminDashboard />}
       {currentView === 'leaders' && <PublicLeaderboard />}
+      {currentView === 'clubs-apply' && <ClubApplyForm />}
     </>
   )
 }
