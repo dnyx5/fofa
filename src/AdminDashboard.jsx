@@ -332,6 +332,7 @@ function Dashboard({ data, activeTab, setActiveTab, token }) {
   const tabs = [
     { id: "overview", label: "Overview" },
     { id: "users", label: "Users" },
+    { id: "clubs", label: "🏟️ Club Applications" },
   ];
 
   return (
@@ -370,6 +371,7 @@ function Dashboard({ data, activeTab, setActiveTab, token }) {
 
       {activeTab === "overview" && <OverviewTab data={data} />}
       {activeTab === "users" && <UsersTab token={token} />}
+      {activeTab === "clubs" && <ClubsApplicationsTab token={token} />}
     </div>
   );
 }
@@ -1018,4 +1020,664 @@ function paginationButtonStyle(disabled) {
     letterSpacing: "0.1em",
     textTransform: "uppercase",
   };
+}
+
+// ============================================================================
+// CLUB APPLICATIONS TAB
+// ============================================================================
+
+function ClubsApplicationsTab({ token }) {
+  const [applications, setApplications] = useState([]);
+  const [counts, setCounts] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [selectedApp, setSelectedApp] = useState(null);
+
+  useEffect(() => {
+    fetchApplications();
+  }, [filterStatus]);
+
+  async function fetchApplications() {
+    setLoading(true);
+    try {
+      const url = filterStatus === "all"
+        ? `${API_URL}/admin/clubs/applications`
+        : `${API_URL}/admin/clubs/applications?status=${filterStatus}`;
+      
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      setApplications(data.applications || []);
+      setCounts(data.counts || {});
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function viewApplication(id) {
+    try {
+      const response = await fetch(`${API_URL}/admin/clubs/applications/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      setSelectedApp(data.application);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function approveApplication(id, notes = "") {
+    if (!confirm("Approve this club? They will be published immediately.")) return;
+    
+    try {
+      const response = await fetch(`${API_URL}/admin/clubs/applications/${id}/approve`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ notes }),
+      });
+      
+      if (!response.ok) throw new Error("Approval failed");
+      const data = await response.json();
+      
+      alert(`✅ Approved! Club is now live at: ${data.club.public_url}`);
+      setSelectedApp(null);
+      fetchApplications();
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    }
+  }
+
+  async function rejectApplication(id, notes) {
+    const reason = notes || prompt("Reason for rejection (will be visible internally):");
+    if (!reason) return;
+    
+    try {
+      const response = await fetch(`${API_URL}/admin/clubs/applications/${id}/reject`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ notes: reason }),
+      });
+      
+      if (!response.ok) throw new Error("Rejection failed");
+      
+      alert("Application rejected");
+      setSelectedApp(null);
+      fetchApplications();
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    }
+  }
+
+  function timeAgo(dateStr) {
+    const date = new Date(dateStr);
+    const diff = (new Date() - date) / 1000;
+    if (diff < 60) return `${Math.round(diff)}s ago`;
+    if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
+    return `${Math.round(diff / 86400)}d ago`;
+  }
+
+  function statusColor(status) {
+    const map = {
+      pending: COLORS.body,
+      ai_reviewing: COLORS.gold,
+      needs_human_review: COLORS.gold,
+      approved: COLORS.green,
+      rejected: COLORS.red,
+    };
+    return map[status] || COLORS.body;
+  }
+
+  function statusEmoji(status) {
+    const map = {
+      pending: "⏳",
+      ai_reviewing: "🤖",
+      needs_human_review: "⚠️",
+      approved: "✅",
+      rejected: "❌",
+    };
+    return map[status] || "❓";
+  }
+
+  // Detail modal
+  if (selectedApp) {
+    return (
+      <ApplicationDetail
+        application={selectedApp}
+        onClose={() => setSelectedApp(null)}
+        onApprove={() => approveApplication(selectedApp._id)}
+        onReject={(notes) => rejectApplication(selectedApp._id, notes)}
+      />
+    );
+  }
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: 24,
+        gap: 12,
+        flexWrap: "wrap",
+      }}>
+        <h2 style={{
+          fontFamily: "'Barlow Condensed', sans-serif",
+          fontSize: 28,
+          fontWeight: 900,
+          color: "#F2F5EE",
+          margin: 0,
+        }}>
+          Club Applications
+        </h2>
+      </div>
+
+      {/* Filter pills */}
+      <div style={{
+        display: "flex",
+        gap: 8,
+        marginBottom: 24,
+        flexWrap: "wrap",
+      }}>
+        {[
+          { id: "all", label: "All", count: Object.values(counts).reduce((s, n) => s + n, 0) },
+          { id: "needs_human_review", label: "Needs Review", count: counts.needs_human_review || 0 },
+          { id: "approved", label: "Approved", count: counts.approved || 0 },
+          { id: "rejected", label: "Rejected", count: counts.rejected || 0 },
+          { id: "ai_reviewing", label: "AI Reviewing", count: counts.ai_reviewing || 0 },
+        ].map(filter => (
+          <button
+            key={filter.id}
+            onClick={() => setFilterStatus(filter.id)}
+            style={{
+              padding: "10px 14px",
+              background: filterStatus === filter.id ? COLORS.greenGlow : "transparent",
+              border: `1px solid ${filterStatus === filter.id ? COLORS.green : COLORS.hairline}`,
+              color: filterStatus === filter.id ? COLORS.green : COLORS.body,
+              fontSize: 11,
+              fontFamily: "'DM Mono', monospace",
+              borderRadius: 100,
+              cursor: "pointer",
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              transition: "all 0.2s",
+            }}
+          >
+            {filter.label} {filter.count > 0 && <span style={{ opacity: 0.7 }}>({filter.count})</span>}
+          </button>
+        ))}
+      </div>
+
+      {/* Applications list */}
+      {loading ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {[1, 2, 3].map(i => <div key={i} className="skeleton" style={{ height: 100 }} />)}
+        </div>
+      ) : applications.length === 0 ? (
+        <div style={{
+          textAlign: "center",
+          padding: 60,
+          background: COLORS.bgSoft,
+          border: `1px solid ${COLORS.hairline}`,
+          borderRadius: 4,
+        }}>
+          <div style={{ fontSize: 48, marginBottom: 12, opacity: 0.4 }}>📭</div>
+          <div style={{ color: COLORS.body, fontSize: 14 }}>No applications in this category yet.</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {applications.map(app => (
+            <div
+              key={app.id}
+              onClick={() => viewApplication(app.id)}
+              style={{
+                background: COLORS.bgSoft,
+                border: `1px solid ${COLORS.hairline}`,
+                borderRadius: 4,
+                padding: 20,
+                cursor: "pointer",
+                transition: "all 0.2s",
+                display: "flex",
+                gap: 16,
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.borderColor = COLORS.green;
+                e.currentTarget.style.background = COLORS.bgCard;
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.borderColor = COLORS.hairline;
+                e.currentTarget.style.background = COLORS.bgSoft;
+              }}
+            >
+              <div style={{ fontSize: 24 }}>{statusEmoji(app.status)}</div>
+              
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{
+                  fontSize: 16,
+                  color: "#F2F5EE",
+                  fontWeight: 500,
+                  marginBottom: 4,
+                }}>
+                  {app.club_name}
+                </div>
+                <div style={{
+                  fontSize: 11,
+                  fontFamily: "'DM Mono', monospace",
+                  color: COLORS.body,
+                  opacity: 0.6,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                }}>
+                  {app.country} · {app.league}
+                </div>
+              </div>
+              
+              <div style={{ minWidth: 140, textAlign: "right" }}>
+                <div style={{
+                  fontSize: 14,
+                  color: COLORS.gold,
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontWeight: 700,
+                }}>
+                  {app.funding_currency} {app.funding_amount.toLocaleString()}
+                </div>
+                <div style={{
+                  fontSize: 10,
+                  color: COLORS.body,
+                  opacity: 0.5,
+                  fontFamily: "'DM Mono', monospace",
+                }}>
+                  REQUESTED
+                </div>
+              </div>
+              
+              <div style={{ minWidth: 120, textAlign: "right" }}>
+                <div style={{
+                  fontSize: 11,
+                  fontFamily: "'DM Mono', monospace",
+                  color: statusColor(app.status),
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  fontWeight: 700,
+                }}>
+                  {app.status.replace(/_/g, " ")}
+                </div>
+                {app.ai_decision && (
+                  <div style={{
+                    fontSize: 10,
+                    color: COLORS.body,
+                    opacity: 0.5,
+                    fontFamily: "'DM Mono', monospace",
+                    marginTop: 4,
+                  }}>
+                    AI: {app.ai_decision} ({Math.round((app.ai_confidence || 0) * 100)}%)
+                  </div>
+                )}
+                <div style={{
+                  fontSize: 10,
+                  color: COLORS.body,
+                  opacity: 0.4,
+                  fontFamily: "'DM Mono', monospace",
+                  marginTop: 4,
+                }}>
+                  {timeAgo(app.submitted_at)}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// APPLICATION DETAIL VIEW
+// ============================================================================
+
+function ApplicationDetail({ application, onClose, onApprove, onReject }) {
+  const ai = application.ai_verification || {};
+  
+  return (
+    <div>
+      {/* Back button */}
+      <button
+        onClick={onClose}
+        style={{
+          background: "transparent",
+          border: `1px solid ${COLORS.hairline}`,
+          color: COLORS.body,
+          padding: "8px 14px",
+          borderRadius: 4,
+          fontSize: 11,
+          fontFamily: "'DM Mono', monospace",
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          cursor: "pointer",
+          marginBottom: 24,
+        }}
+      >
+        ← Back to list
+      </button>
+
+      {/* Header */}
+      <div style={{ marginBottom: 32 }}>
+        <h2 style={{
+          fontFamily: "'Barlow Condensed', sans-serif",
+          fontSize: 36,
+          fontWeight: 900,
+          color: "#F2F5EE",
+          margin: "0 0 8px",
+        }}>
+          {application.club_name}
+        </h2>
+        <p style={{ color: COLORS.body, opacity: 0.7, margin: 0, fontSize: 14 }}>
+          {application.country} · {application.league_tier || application.league}
+          {application.founded_year && ` · Founded ${application.founded_year}`}
+        </p>
+      </div>
+
+      {/* AI Verification Result */}
+      {ai.decision && (
+        <div style={{
+          background: COLORS.bgSoft,
+          border: `1px solid ${ai.decision === "approved" ? COLORS.green : ai.decision === "rejected" ? COLORS.red : COLORS.gold}`,
+          borderRadius: 4,
+          padding: 20,
+          marginBottom: 24,
+        }}>
+          <div style={{
+            fontSize: 11,
+            fontFamily: "'DM Mono', monospace",
+            color: ai.decision === "approved" ? COLORS.green : ai.decision === "rejected" ? COLORS.red : COLORS.gold,
+            letterSpacing: "0.2em",
+            marginBottom: 12,
+          }}>
+            🤖 AI VERIFICATION · {ai.decision.toUpperCase()} · {Math.round((ai.confidence || 0) * 100)}% CONFIDENCE
+          </div>
+          
+          <p style={{ color: "#F2F5EE", fontSize: 14, margin: "0 0 16px", lineHeight: 1.6 }}>
+            {ai.reasoning}
+          </p>
+          
+          {/* AI checks */}
+          {ai.checks && (
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: 8,
+              marginTop: 16,
+              fontSize: 12,
+              fontFamily: "'DM Mono', monospace",
+            }}>
+              <CheckPill label="Club Exists" value={ai.checks.club_exists} />
+              <CheckPill label="Email Legit" value={ai.checks.email_legitimate} />
+              <CheckPill label="Ask Reasonable" value={ai.checks.ask_reasonable} />
+            </div>
+          )}
+          
+          {/* Red flags */}
+          {ai.checks?.red_flags && ai.checks.red_flags.length > 0 && (
+            <div style={{
+              marginTop: 12,
+              padding: 12,
+              background: "rgba(255, 71, 87, 0.1)",
+              borderRadius: 4,
+              fontSize: 12,
+              color: COLORS.red,
+              fontFamily: "'DM Mono', monospace",
+            }}>
+              🚩 RED FLAGS: {ai.checks.red_flags.join(", ")}
+            </div>
+          )}
+          
+          {/* Funding context */}
+          {ai.checks?.league_average_funding && (
+            <div style={{
+              marginTop: 12,
+              fontSize: 11,
+              color: COLORS.body,
+              opacity: 0.7,
+              fontFamily: "'DM Mono', monospace",
+            }}>
+              LEAGUE NORMS: AVG £{ai.checks.league_average_funding.toLocaleString()} · MAX TYPICAL £{ai.checks.league_max_typical?.toLocaleString()}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Sections */}
+      <DetailSection title="Funding Request">
+        <DetailField label="Amount">
+          {application.funding_currency} {application.funding_amount?.toLocaleString()}
+        </DetailField>
+        <DetailField label="Duration">{application.funding_duration_months} months</DetailField>
+        <DetailField label="Purpose" full>
+          {application.funding_purpose}
+        </DetailField>
+        <DetailField label="What Club Offers" full>
+          {application.what_club_offers}
+        </DetailField>
+        <DetailField label="Why FOFA" full>
+          {application.why_fofa}
+        </DetailField>
+      </DetailSection>
+
+      <DetailSection title="Club Information">
+        <DetailField label="Website">
+          <a href={application.website} target="_blank" rel="noopener" style={{ color: COLORS.green }}>
+            {application.website}
+          </a>
+        </DetailField>
+        {application.stadium && <DetailField label="Stadium">{application.stadium}</DetailField>}
+        {application.description && <DetailField label="Description" full>{application.description}</DetailField>}
+      </DetailSection>
+
+      <DetailSection title="Contact">
+        <DetailField label="Name">{application.contact_name}</DetailField>
+        <DetailField label="Role">{application.contact_role}</DetailField>
+        <DetailField label="Email">
+          <a href={`mailto:${application.contact_email}`} style={{ color: COLORS.green }}>
+            {application.contact_email}
+          </a>
+        </DetailField>
+        {application.contact_phone && <DetailField label="Phone">{application.contact_phone}</DetailField>}
+      </DetailSection>
+
+      {(application.social_twitter || application.social_instagram || application.social_facebook) && (
+        <DetailSection title="Social Media">
+          {application.social_twitter && <DetailField label="Twitter">{application.social_twitter}</DetailField>}
+          {application.social_instagram && <DetailField label="Instagram">{application.social_instagram}</DetailField>}
+          {application.social_facebook && <DetailField label="Facebook">{application.social_facebook}</DetailField>}
+        </DetailSection>
+      )}
+
+      {/* Action buttons */}
+      {(application.status === "needs_human_review" || application.status === "ai_reviewing") && (
+        <div style={{
+          marginTop: 32,
+          padding: 20,
+          background: COLORS.bgSoft,
+          border: `1px solid ${COLORS.hairline}`,
+          borderRadius: 4,
+          display: "flex",
+          gap: 12,
+          flexWrap: "wrap",
+        }}>
+          <button
+            onClick={onApprove}
+            style={{
+              flex: 1,
+              minWidth: 200,
+              background: COLORS.green,
+              color: COLORS.bg,
+              border: "none",
+              padding: "14px 24px",
+              fontSize: 13,
+              fontFamily: "'DM Mono', monospace",
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              fontWeight: 700,
+              borderRadius: 4,
+              cursor: "pointer",
+            }}
+          >
+            ✅ Approve & Publish
+          </button>
+          <button
+            onClick={() => onReject()}
+            style={{
+              flex: 1,
+              minWidth: 200,
+              background: "transparent",
+              color: COLORS.red,
+              border: `1px solid ${COLORS.red}`,
+              padding: "14px 24px",
+              fontSize: 13,
+              fontFamily: "'DM Mono', monospace",
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              fontWeight: 700,
+              borderRadius: 4,
+              cursor: "pointer",
+            }}
+          >
+            ❌ Reject
+          </button>
+        </div>
+      )}
+      
+      {application.status === "approved" && (
+        <div style={{
+          marginTop: 32,
+          padding: 20,
+          background: COLORS.greenGlow,
+          border: `1px solid ${COLORS.green}`,
+          borderRadius: 4,
+          textAlign: "center",
+        }}>
+          <div style={{ color: COLORS.green, fontSize: 14, marginBottom: 8 }}>
+            ✅ This club has been approved and is live
+          </div>
+          {application.approved_club_id && (
+            <a
+              href={`/#clubs/view`}
+              style={{
+                color: COLORS.green,
+                fontFamily: "'DM Mono', monospace",
+                fontSize: 11,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+              }}
+            >
+              View public page →
+            </a>
+          )}
+        </div>
+      )}
+
+      {application.status === "rejected" && (
+        <div style={{
+          marginTop: 32,
+          padding: 20,
+          background: "rgba(255, 71, 87, 0.1)",
+          border: `1px solid ${COLORS.red}`,
+          borderRadius: 4,
+          textAlign: "center",
+        }}>
+          <div style={{ color: COLORS.red, fontSize: 14 }}>
+            ❌ This application was rejected
+            {application.human_decision?.notes && (
+              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8, fontStyle: "italic" }}>
+                Reason: {application.human_decision.notes}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailSection({ title, children }) {
+  return (
+    <div style={{
+      background: COLORS.bgSoft,
+      border: `1px solid ${COLORS.hairline}`,
+      borderRadius: 4,
+      padding: 20,
+      marginBottom: 16,
+    }}>
+      <div style={{
+        fontSize: 11,
+        fontFamily: "'DM Mono', monospace",
+        color: COLORS.gold,
+        letterSpacing: "0.2em",
+        textTransform: "uppercase",
+        marginBottom: 16,
+      }}>
+        {title}
+      </div>
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+        gap: 16,
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function DetailField({ label, children, full }) {
+  return (
+    <div style={{ gridColumn: full ? "1 / -1" : "auto" }}>
+      <div style={{
+        fontSize: 10,
+        fontFamily: "'DM Mono', monospace",
+        color: COLORS.body,
+        opacity: 0.6,
+        letterSpacing: "0.15em",
+        textTransform: "uppercase",
+        marginBottom: 6,
+      }}>
+        {label}
+      </div>
+      <div style={{ color: "#F2F5EE", fontSize: 14, lineHeight: 1.5, wordBreak: "break-word" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function CheckPill({ label, value }) {
+  const color = value === true ? COLORS.green : value === false ? COLORS.red : COLORS.body;
+  const symbol = value === true ? "✓" : value === false ? "✗" : "?";
+  return (
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      padding: "8px 12px",
+      background: COLORS.bg,
+      borderRadius: 4,
+    }}>
+      <span style={{ color, fontSize: 14, fontWeight: 700 }}>{symbol}</span>
+      <span style={{ color: COLORS.body, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+        {label}
+      </span>
+    </div>
+  );
 }
