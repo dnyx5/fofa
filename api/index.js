@@ -954,7 +954,8 @@ export default async function handler(req, res) {
     }
     
     // Get individual club page (public, by slug)
-    if (pathname.match(/\/clubs\/[a-z0-9-]+$/) && req.method === "GET") {
+    // Important: exclude /admin/ and /applications paths
+    if (pathname.match(/\/clubs\/[a-z0-9-]+$/) && req.method === "GET" && !pathname.includes("/admin/") && !pathname.includes("/applications")) {
       const slug = pathname.split("/").pop();
       
       const club = await Club.findOne({ slug, status: "active" });
