@@ -732,7 +732,7 @@ export default async function handler(req, res) {
       
       return res.status(200).json({
         referral_code: user.referral_code,
-        referral_link: `https://fofa-xi.vercel.app/#join?ref=${user.referral_code}`,
+        referral_link: `${process.env.PUBLIC_URL || "https://fofa-xi.vercel.app"}/#join?ref=${user.referral_code}`,
         referral_count: user.referral_count || 0,
         recruiter_rank: myRank,
         referred_users: referredUsers.map(u => ({
@@ -894,8 +894,8 @@ export default async function handler(req, res) {
       });
     }
     
-    // Get application status (public, by ID)
-    if (pathname.match(/\/clubs\/applications\/[^\/]+$/) && req.method === "GET") {
+    // Get application status (public, by ID) - excludes admin paths
+    if (pathname.match(/\/clubs\/applications\/[^\/]+$/) && req.method === "GET" && !pathname.includes("/admin/")) {
       const id = pathname.split("/").pop();
       if (!id.match(/^[a-f0-9]{24}$/)) {
         return res.status(400).json({ error: "Invalid application ID" });
