@@ -27,6 +27,7 @@ export default function ClubsPage() {
   const [clubs, setClubs] = useState([]);
   const [selectedClub, setSelectedClub] = useState(null);
   const [topFans, setTopFans] = useState([]);
+  const [endorsements, setEndorsements] = useState([]);
   
   useEffect(() => {
     handleRoute();
@@ -70,6 +71,20 @@ export default function ClubsPage() {
       const data = await response.json();
       setSelectedClub(data.club);
       setTopFans(data.top_fans || []);
+      
+      // Also fetch endorsements (don't fail page if this fails)
+      try {
+        const endorseResponse = await fetch(`${API_URL}/clubs/${slug}/endorsements`);
+        if (endorseResponse.ok) {
+          const endorseData = await endorseResponse.json();
+          setEndorsements(endorseData.endorsements || []);
+        } else {
+          setEndorsements([]);
+        }
+      } catch (e) {
+        setEndorsements([]);
+      }
+      
       setView("detail");
     } catch (err) {
       console.error(err);
@@ -92,7 +107,7 @@ export default function ClubsPage() {
           {view === "loading" && <LoadingState />}
           {view === "list" && <ClubsListView clubs={clubs} />}
           {view === "detail" && selectedClub && (
-            <ClubDetailView club={selectedClub} topFans={topFans} />
+            <ClubDetailView club={selectedClub} topFans={topFans} endorsements={endorsements} />
           )}
           {view === "not-found" && <NotFoundView />}
         </div>
@@ -436,7 +451,7 @@ function EmptyClubsList() {
 // CLUB DETAIL VIEW
 // ============================================================================
 
-function ClubDetailView({ club, topFans }) {
+function ClubDetailView({ club, topFans, endorsements = [] }) {
   const initials = club.name.split(" ").map(w => w[0]).join("").slice(0, 3).toUpperCase();
   
   function getLevelColor(level) {
@@ -637,6 +652,134 @@ function ClubDetailView({ club, topFans }) {
           }}>
             {club.description}
           </p>
+        </div>
+      )}
+      
+      {/* Expert Endorsements */}
+      {endorsements.length > 0 && (
+        <div style={{
+          background: `linear-gradient(135deg, ${COLORS.bgCard} 0%, ${COLORS.bgSoft} 100%)`,
+          border: `1px solid ${COLORS.gold}40`,
+          borderRadius: 4,
+          padding: 24,
+          marginBottom: 24,
+          boxShadow: `0 0 30px ${COLORS.gold}10`,
+        }}>
+          <div style={{
+            fontSize: 11,
+            fontFamily: "'DM Mono', monospace",
+            color: COLORS.gold,
+            letterSpacing: "0.2em",
+            textTransform: "uppercase",
+            marginBottom: 16,
+          }}>
+            🛡️ Endorsed by FOFA Experts ({endorsements.length})
+          </div>
+          
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {endorsements.map(end => {
+              if (!end.expert) return null;
+              const initials = end.expert.full_name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase();
+              const tierColors = {
+                legend: "#FFD700",
+                authority: "#C8A84B",
+                ambassador: "#1AC8C8",
+              };
+              const typeIcons = {
+                verifier: "🛡️",
+                voice: "📢",
+                ambassador: "🎖️",
+              };
+              const tierColor = tierColors[end.expert.tier] || "#C8A84B";
+              const typeIcon = typeIcons[end.expert.expert_type] || "🎓";
+              
+              return (
+                <div
+                  key={end.id}
+                  style={{
+                    background: COLORS.bg,
+                    border: `1px solid ${COLORS.hairline}`,
+                    borderRadius: 4,
+                    padding: 20,
+                    display: "flex",
+                    gap: 16,
+                    alignItems: "flex-start",
+                  }}
+                >
+                  {/* Avatar */}
+                  <div style={{
+                    width: 48,
+                    height: 48,
+                    borderRadius: "50%",
+                    background: COLORS.bg,
+                    border: `2px solid ${tierColor}`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontFamily: "'Barlow Condensed', sans-serif",
+                    fontWeight: 900,
+                    fontSize: 16,
+                    color: tierColor,
+                    flexShrink: 0,
+                  }}>
+                    {initials}
+                  </div>
+                  
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {/* Quote */}
+                    <p style={{
+                      color: "#F2F5EE",
+                      fontSize: 15,
+                      lineHeight: 1.6,
+                      margin: "0 0 12px",
+                      fontStyle: "italic",
+                    }}>
+                      "{end.endorsement_text}"
+                    </p>
+                    
+                    {/* Expert info */}
+                    <a
+                      href={`#experts/${end.expert.slug}`}
+                      style={{
+                        textDecoration: "none",
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <span style={{
+                        color: "#F2F5EE",
+                        fontSize: 13,
+                        fontWeight: 500,
+                      }}>
+                        {end.expert.display_name || end.expert.full_name}
+                      </span>
+                      <span style={{
+                        fontSize: 10,
+                        fontFamily: "'DM Mono', monospace",
+                        color: tierColor,
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                      }}>
+                        {typeIcon} {end.expert.expert_type}
+                      </span>
+                      {end.expert.current_role && (
+                        <span style={{
+                          fontSize: 11,
+                          color: COLORS.body,
+                          opacity: 0.5,
+                          fontStyle: "italic",
+                        }}>
+                          · {end.expert.current_role}
+                        </span>
+                      )}
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
       
