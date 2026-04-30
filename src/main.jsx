@@ -8,6 +8,7 @@ import ClubApplyForm from './ClubApplyForm.jsx'
 import ClubsPage from './ClubsPage.jsx'
 import ExpertsPage from './ExpertsPage.jsx'
 import ExpertApplyForm from './ExpertApplyForm.jsx'
+import ExpertDashboard from './ExpertDashboard.jsx'
 
 function App() {
   const [currentView, setCurrentView] = useState('site')
@@ -17,7 +18,9 @@ function App() {
       const hash = window.location.hash
       
       // Routes - more specific first
-      if (hash === '#experts/apply') {
+      if (hash === '#expert/dashboard') {
+        setCurrentView('expert-dashboard')
+      } else if (hash === '#experts/apply') {
         setCurrentView('experts-apply')
       } else if (hash === '#experts' || hash.match(/^#experts\/[a-z0-9-]+$/)) {
         setCurrentView('experts')
@@ -53,6 +56,7 @@ function App() {
       {currentView === 'clubs' && <ClubsPage />}
       {currentView === 'experts' && <ExpertsPage />}
       {currentView === 'experts-apply' && <ExpertApplyForm />}
+      {currentView === 'expert-dashboard' && <ExpertDashboard />}
     </>
   )
 }
