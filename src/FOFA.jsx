@@ -986,7 +986,7 @@ export default function FOFA() {
                 </svg>
               </a>
               <a href="#clubs/apply" className="cta-ghost">For Clubs</a>
-              <a href="#" className="cta-ghost">For Experts</a>
+              <a href="#experts/apply" className="cta-ghost">For Experts</a>
             </div>
           </Reveal>
         </div>
