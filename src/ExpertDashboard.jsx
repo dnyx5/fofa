@@ -201,8 +201,8 @@ export default function ExpertDashboard() {
 
           {/* Tab Content */}
           {activeTab === "clubs" && <ClubsToEndorse clubs={clubs} expert={expert} token={token} onEndorsed={loadExpertProfile} />}
-          {activeTab === "endorsements" && <MyEndorsements expertId={expert.id} expertSlug={expert.slug} />}
-          {activeTab === "profile" && <ProfilePreview expert={expert} />}
+          {activeTab === "endorsements" && <MyEndorsements expertId={expert.id} expertSlug={expert.slug} token={token} onChanged={loadExpertProfile} />}
+          {activeTab === "profile" && <ProfileEditor expert={expert} token={token} onSaved={loadExpertProfile} />}
         </div>
       </div>
     </div>
@@ -551,9 +551,13 @@ function ClubsToEndorse({ clubs, expert, token, onEndorsed }) {
 // MY ENDORSEMENTS
 // ============================================================================
 
-function MyEndorsements({ expertId, expertSlug }) {
+function MyEndorsements({ expertId, expertSlug, token, onChanged }) {
   const [endorsements, setEndorsements] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
 
   useEffect(() => {
     fetchEndorsements();
@@ -569,6 +573,53 @@ function MyEndorsements({ expertId, expertSlug }) {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleEdit(endorsementId) {
+    if (editText.trim().length < 20) {
+      alert("Endorsement must be at least 20 characters");
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await fetch(`${API_URL}/experts/endorsements/${endorsementId}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ endorsement_text: editText.trim() }),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Update failed");
+      }
+      setEditingId(null);
+      setEditText("");
+      fetchEndorsements();
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(endorsementId) {
+    try {
+      const response = await fetch(`${API_URL}/experts/endorsements/${endorsementId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Delete failed");
+      }
+      setDeletingId(null);
+      fetchEndorsements();
+      onChanged();
+    } catch (err) {
+      alert(`Error: ${err.message}`);
     }
   }
 
@@ -625,25 +676,201 @@ function MyEndorsements({ expertId, expertSlug }) {
               → {end.club.name}
             </a>
           )}
-          <p style={{
-            color: COLORS.body,
-            fontSize: 14,
-            lineHeight: 1.6,
-            margin: 0,
-            fontStyle: "italic",
-          }}>
-            "{end.endorsement_text}"
-          </p>
-          <div style={{
-            fontSize: 10,
-            fontFamily: "'DM Mono', monospace",
-            color: COLORS.body,
-            opacity: 0.4,
-            marginTop: 12,
-            letterSpacing: "0.1em",
-          }}>
-            {new Date(end.created_at).toLocaleDateString()}
-          </div>
+
+          {/* Delete confirmation */}
+          {deletingId === end.id ? (
+            <div style={{
+              background: COLORS.bg,
+              border: `1px solid ${COLORS.red}40`,
+              borderRadius: 4,
+              padding: 16,
+              marginTop: 8,
+            }}>
+              <p style={{ color: COLORS.body, fontSize: 13, margin: "0 0 12px" }}>
+                Are you sure you want to delete this endorsement? This cannot be undone.
+              </p>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => handleDelete(end.id)}
+                  style={{
+                    background: COLORS.red,
+                    color: "#fff",
+                    border: "none",
+                    padding: "8px 16px",
+                    fontSize: 11,
+                    fontFamily: "'DM Mono', monospace",
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                >
+                  Yes, Delete
+                </button>
+                <button
+                  onClick={() => setDeletingId(null)}
+                  style={{
+                    background: "transparent",
+                    color: COLORS.body,
+                    border: `1px solid ${COLORS.hairlineStrong}`,
+                    padding: "8px 16px",
+                    fontSize: 11,
+                    fontFamily: "'DM Mono', monospace",
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : editingId === end.id ? (
+            /* Edit mode */
+            <div style={{ marginTop: 8 }}>
+              <textarea
+                value={editText}
+                onChange={e => setEditText(e.target.value)}
+                rows={4}
+                style={{
+                  width: "100%",
+                  background: COLORS.bg,
+                  border: `1px solid ${COLORS.green}40`,
+                  color: "#F2F5EE",
+                  padding: 14,
+                  borderRadius: 4,
+                  fontSize: 14,
+                  fontFamily: "'Crimson Pro', serif",
+                  outline: "none",
+                  resize: "vertical",
+                  boxSizing: "border-box",
+                }}
+              />
+              <div style={{
+                fontSize: 11,
+                fontFamily: "'DM Mono', monospace",
+                color: editText.trim().length < 20 ? COLORS.red : COLORS.body,
+                opacity: 0.6,
+                marginTop: 4,
+                marginBottom: 12,
+              }}>
+                {editText.trim().length} / 20 chars minimum
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => handleEdit(end.id)}
+                  disabled={saving || editText.trim().length < 20}
+                  style={{
+                    background: COLORS.green,
+                    color: COLORS.bg,
+                    border: "none",
+                    padding: "8px 16px",
+                    fontSize: 11,
+                    fontFamily: "'DM Mono', monospace",
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    fontWeight: 700,
+                    borderRadius: 4,
+                    cursor: (saving || editText.trim().length < 20) ? "not-allowed" : "pointer",
+                    opacity: (saving || editText.trim().length < 20) ? 0.5 : 1,
+                  }}
+                >
+                  {saving ? "Saving..." : "Save Changes"}
+                </button>
+                <button
+                  onClick={() => { setEditingId(null); setEditText(""); }}
+                  style={{
+                    background: "transparent",
+                    color: COLORS.body,
+                    border: `1px solid ${COLORS.hairlineStrong}`,
+                    padding: "8px 16px",
+                    fontSize: 11,
+                    fontFamily: "'DM Mono', monospace",
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    borderRadius: 4,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Display mode */
+            <>
+              <p style={{
+                color: COLORS.body,
+                fontSize: 14,
+                lineHeight: 1.6,
+                margin: 0,
+                fontStyle: "italic",
+              }}>
+                "{end.endorsement_text}"
+              </p>
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginTop: 12,
+                flexWrap: "wrap",
+                gap: 8,
+              }}>
+                <div style={{
+                  fontSize: 10,
+                  fontFamily: "'DM Mono', monospace",
+                  color: COLORS.body,
+                  opacity: 0.4,
+                  letterSpacing: "0.1em",
+                }}>
+                  {new Date(end.created_at).toLocaleDateString()}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => { setEditingId(end.id); setEditText(end.endorsement_text); setDeletingId(null); }}
+                    style={{
+                      background: "transparent",
+                      border: `1px solid ${COLORS.hairlineStrong}`,
+                      color: COLORS.teal,
+                      padding: "5px 12px",
+                      fontSize: 10,
+                      fontFamily: "'DM Mono', monospace",
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      borderRadius: 3,
+                      cursor: "pointer",
+                      transition: "all 0.2s",
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.teal; e.currentTarget.style.background = COLORS.teal + "15"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.hairlineStrong; e.currentTarget.style.background = "transparent"; }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => { setDeletingId(end.id); setEditingId(null); }}
+                    style={{
+                      background: "transparent",
+                      border: `1px solid ${COLORS.hairlineStrong}`,
+                      color: COLORS.red,
+                      padding: "5px 12px",
+                      fontSize: 10,
+                      fontFamily: "'DM Mono', monospace",
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      borderRadius: 3,
+                      cursor: "pointer",
+                      transition: "all 0.2s",
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.red; e.currentTarget.style.background = COLORS.red + "15"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.hairlineStrong; e.currentTarget.style.background = "transparent"; }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       ))}
     </div>
@@ -654,43 +881,323 @@ function MyEndorsements({ expertId, expertSlug }) {
 // PROFILE PREVIEW
 // ============================================================================
 
-function ProfilePreview({ expert }) {
+function ProfileEditor({ expert, token, onSaved }) {
+  const [form, setForm] = useState({
+    display_name: expert.display_name || "",
+    bio: expert.bio || "",
+    current_role: expert.current_role || "",
+    country: expert.country || "",
+    region_focus: expert.region_focus || "",
+    website: expert.website || "",
+    social_twitter: expert.social?.twitter || "",
+    social_instagram: expert.social?.instagram || "",
+    social_linkedin: expert.social?.linkedin || "",
+    social_youtube: expert.social?.youtube || "",
+    clubs_supported: (expert.clubs_supported || []).join(", "),
+    expertise_areas: (expert.expertise_areas || []).join(", "),
+  });
+  const [saving, setSaving] = useState(false);
+  const [feedback, setFeedback] = useState(null);
+
+  function handleChange(field, value) {
+    setForm(prev => ({ ...prev, [field]: value }));
+    setFeedback(null);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setFeedback(null);
+    try {
+      const payload = { ...form };
+      // Convert comma-separated strings to arrays
+      payload.clubs_supported = form.clubs_supported.split(",").map(s => s.trim()).filter(Boolean);
+      payload.expertise_areas = form.expertise_areas.split(",").map(s => s.trim()).filter(Boolean);
+
+      const response = await fetch(`${API_URL}/experts/me`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Update failed");
+      }
+
+      setFeedback({ type: "success", message: "Profile updated successfully" });
+      onSaved();
+    } catch (err) {
+      setFeedback({ type: "error", message: err.message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputStyle = {
+    width: "100%",
+    background: COLORS.bg,
+    border: `1px solid ${COLORS.hairlineStrong}`,
+    color: "#F2F5EE",
+    padding: "12px 14px",
+    borderRadius: 4,
+    fontSize: 14,
+    fontFamily: "'Crimson Pro', serif",
+    outline: "none",
+    boxSizing: "border-box",
+    transition: "border-color 0.2s",
+  };
+
+  const labelStyle = {
+    display: "block",
+    fontSize: 11,
+    fontFamily: "'DM Mono', monospace",
+    color: COLORS.body,
+    opacity: 0.7,
+    letterSpacing: "0.1em",
+    textTransform: "uppercase",
+    marginBottom: 6,
+  };
+
   return (
     <div>
+      {/* Read-only info */}
       <div style={{
         background: COLORS.bgSoft,
         border: `1px solid ${COLORS.hairline}`,
         borderRadius: 4,
         padding: 24,
-        marginBottom: 16,
+        marginBottom: 20,
       }}>
         <div style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", color: COLORS.gold, letterSpacing: "0.2em", marginBottom: 16 }}>
-          PROFILE INFO
+          ACCOUNT INFO (READ-ONLY)
         </div>
         <PreviewField label="Full Name" value={expert.full_name} />
-        <PreviewField label="Display Name" value={expert.display_name || expert.full_name} />
         <PreviewField label="Type" value={`${TYPE_LABELS[expert.expert_type]?.icon} ${TYPE_LABELS[expert.expert_type]?.label}`} />
         <PreviewField label="Tier" value={`${TIER_BADGES[expert.tier]?.icon} ${TIER_BADGES[expert.tier]?.label}`} />
         <PreviewField label="Endorsements" value={expert.endorsement_count || 0} />
       </div>
 
+      {/* Editable form */}
       <div style={{
         background: COLORS.bgSoft,
-        border: `1px dashed ${COLORS.hairlineStrong}`,
+        border: `1px solid ${COLORS.hairline}`,
         borderRadius: 4,
         padding: 24,
-        textAlign: "center",
       }}>
-        <div style={{ fontSize: 32, marginBottom: 12 }}>✏️</div>
-        <h3 style={{ fontFamily: "'Barlow Condensed', sans-serif", fontSize: 18, color: "#F2F5EE", margin: "0 0 8px" }}>
-          Profile Editing
-        </h3>
-        <p style={{ color: COLORS.body, opacity: 0.7, fontSize: 13, margin: "0 0 16px" }}>
-          Need to update your bio, links, or details?
-        </p>
-        <p style={{ color: COLORS.body, opacity: 0.5, fontSize: 12, margin: 0 }}>
-          Contact admin@fofa.lol to update your profile.
-        </p>
+        <div style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", color: COLORS.green, letterSpacing: "0.2em", marginBottom: 24 }}>
+          EDIT YOUR PROFILE
+        </div>
+
+        {/* Feedback banner */}
+        {feedback && (
+          <div style={{
+            background: feedback.type === "success" ? COLORS.green + "15" : COLORS.red + "15",
+            border: `1px solid ${feedback.type === "success" ? COLORS.green : COLORS.red}40`,
+            borderRadius: 4,
+            padding: "12px 16px",
+            marginBottom: 20,
+            fontSize: 13,
+            color: feedback.type === "success" ? COLORS.green : COLORS.red,
+            fontFamily: "'DM Mono', monospace",
+          }}>
+            {feedback.type === "success" ? "✓" : "✕"} {feedback.message}
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+          {/* Display Name */}
+          <div>
+            <label style={labelStyle}>Display Name</label>
+            <input
+              type="text"
+              value={form.display_name}
+              onChange={e => handleChange("display_name", e.target.value)}
+              style={inputStyle}
+              onFocus={e => e.target.style.borderColor = COLORS.green}
+              onBlur={e => e.target.style.borderColor = COLORS.hairlineStrong}
+            />
+          </div>
+
+          {/* Current Role */}
+          <div>
+            <label style={labelStyle}>Current Role</label>
+            <input
+              type="text"
+              value={form.current_role}
+              onChange={e => handleChange("current_role", e.target.value)}
+              placeholder="e.g., Football Analyst at Sky Sports"
+              style={inputStyle}
+              onFocus={e => e.target.style.borderColor = COLORS.green}
+              onBlur={e => e.target.style.borderColor = COLORS.hairlineStrong}
+            />
+          </div>
+
+          {/* Country */}
+          <div>
+            <label style={labelStyle}>Country</label>
+            <input
+              type="text"
+              value={form.country}
+              onChange={e => handleChange("country", e.target.value)}
+              style={inputStyle}
+              onFocus={e => e.target.style.borderColor = COLORS.green}
+              onBlur={e => e.target.style.borderColor = COLORS.hairlineStrong}
+            />
+          </div>
+
+          {/* Region Focus */}
+          <div>
+            <label style={labelStyle}>Region Focus</label>
+            <input
+              type="text"
+              value={form.region_focus}
+              onChange={e => handleChange("region_focus", e.target.value)}
+              placeholder="e.g., UK & Europe"
+              style={inputStyle}
+              onFocus={e => e.target.style.borderColor = COLORS.green}
+              onBlur={e => e.target.style.borderColor = COLORS.hairlineStrong}
+            />
+          </div>
+        </div>
+
+        {/* Bio */}
+        <div style={{ marginTop: 20 }}>
+          <label style={labelStyle}>Bio</label>
+          <textarea
+            value={form.bio}
+            onChange={e => handleChange("bio", e.target.value)}
+            placeholder="Tell people about your background and expertise..."
+            rows={4}
+            style={{ ...inputStyle, resize: "vertical", fontFamily: "'Crimson Pro', serif" }}
+            onFocus={e => e.target.style.borderColor = COLORS.green}
+            onBlur={e => e.target.style.borderColor = COLORS.hairlineStrong}
+          />
+        </div>
+
+        {/* Expertise & Clubs */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginTop: 20 }}>
+          <div>
+            <label style={labelStyle}>Expertise Areas (comma-separated)</label>
+            <input
+              type="text"
+              value={form.expertise_areas}
+              onChange={e => handleChange("expertise_areas", e.target.value)}
+              placeholder="e.g., Refereeing, Tactics, Youth Development"
+              style={inputStyle}
+              onFocus={e => e.target.style.borderColor = COLORS.green}
+              onBlur={e => e.target.style.borderColor = COLORS.hairlineStrong}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Clubs Supported (comma-separated)</label>
+            <input
+              type="text"
+              value={form.clubs_supported}
+              onChange={e => handleChange("clubs_supported", e.target.value)}
+              placeholder="e.g., Sheffield United, Barnsley"
+              style={inputStyle}
+              onFocus={e => e.target.style.borderColor = COLORS.green}
+              onBlur={e => e.target.style.borderColor = COLORS.hairlineStrong}
+            />
+          </div>
+        </div>
+
+        {/* Social / Online */}
+        <div style={{ marginTop: 28 }}>
+          <div style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", color: COLORS.teal, letterSpacing: "0.2em", marginBottom: 16 }}>
+            ONLINE PRESENCE
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+            <div>
+              <label style={labelStyle}>Website</label>
+              <input
+                type="url"
+                value={form.website}
+                onChange={e => handleChange("website", e.target.value)}
+                placeholder="https://yoursite.com"
+                style={inputStyle}
+                onFocus={e => e.target.style.borderColor = COLORS.green}
+                onBlur={e => e.target.style.borderColor = COLORS.hairlineStrong}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Twitter / X</label>
+              <input
+                type="text"
+                value={form.social_twitter}
+                onChange={e => handleChange("social_twitter", e.target.value)}
+                placeholder="@handle or full URL"
+                style={inputStyle}
+                onFocus={e => e.target.style.borderColor = COLORS.green}
+                onBlur={e => e.target.style.borderColor = COLORS.hairlineStrong}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Instagram</label>
+              <input
+                type="text"
+                value={form.social_instagram}
+                onChange={e => handleChange("social_instagram", e.target.value)}
+                placeholder="@handle or full URL"
+                style={inputStyle}
+                onFocus={e => e.target.style.borderColor = COLORS.green}
+                onBlur={e => e.target.style.borderColor = COLORS.hairlineStrong}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>LinkedIn</label>
+              <input
+                type="text"
+                value={form.social_linkedin}
+                onChange={e => handleChange("social_linkedin", e.target.value)}
+                placeholder="Profile URL"
+                style={inputStyle}
+                onFocus={e => e.target.style.borderColor = COLORS.green}
+                onBlur={e => e.target.style.borderColor = COLORS.hairlineStrong}
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>YouTube</label>
+              <input
+                type="text"
+                value={form.social_youtube}
+                onChange={e => handleChange("social_youtube", e.target.value)}
+                placeholder="Channel URL"
+                style={inputStyle}
+                onFocus={e => e.target.style.borderColor = COLORS.green}
+                onBlur={e => e.target.style.borderColor = COLORS.hairlineStrong}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Save button */}
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            marginTop: 28,
+            width: "100%",
+            background: COLORS.green,
+            color: COLORS.bg,
+            border: "none",
+            padding: "16px 28px",
+            fontSize: 13,
+            fontFamily: "'DM Mono', monospace",
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            fontWeight: 700,
+            borderRadius: 4,
+            cursor: saving ? "not-allowed" : "pointer",
+            opacity: saving ? 0.6 : 1,
+            transition: "opacity 0.2s",
+          }}
+        >
+          {saving ? "Saving..." : "Save Profile Changes"}
+        </button>
       </div>
     </div>
   );
@@ -704,6 +1211,7 @@ function PreviewField({ label, value }) {
       paddingBottom: 12,
       marginBottom: 12,
       borderBottom: `1px solid ${COLORS.hairline}`,
+      flexWrap: "wrap",
     }}>
       <div style={{
         flex: "0 0 140px",
