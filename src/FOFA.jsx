@@ -834,16 +834,16 @@ export default function FOFA() {
               },
               {
                 name: "Tom Watt",
-                role: "Arsenal FC Ambassador",
-                bio: "Actor, author, and one of football's most thoughtful storytellers. A voice for the fan who has always been here.",
+                role: "Ex-Arsenal Shareholder · Cheltenham Town Fan",
+                bio: "Actor, author, and one of football's most thoughtful storytellers. A former Arsenal shareholder who now champions Cheltenham Town — proof that loyalty isn't about size, it's about soul.",
                 quote: "The terraces are where the soul of the game lives.",
                 accent: COLORS.green,
               },
               {
-                name: "Tony Adams",
-                role: "Celebrity Advisor",
-                bio: "Arsenal Legend. England Captain. A figure who knows what the game can take from a player — and what it can give back.",
-                quote: "The game saved me. We owe it the same.",
+                name: "Coming Soon",
+                role: "Premier League Legend",
+                bio: "A former England captain and one of the most decorated defenders in football history. A figure who knows what the game can take from a player — and what it can give back.",
+                quote: "The game gave everything. Now it's time to give back.",
                 accent: COLORS.green,
               },
             ].map((a, i) => (
