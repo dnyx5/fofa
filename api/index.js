@@ -1266,7 +1266,7 @@ export default async function handler(req, res) {
       
       return res.status(200).json({
         referral_code: user.referral_code,
-        referral_link: `${process.env.PUBLIC_URL || "https://fofa-xi.vercel.app"}/#join?ref=${user.referral_code}`,
+        referral_link: `${process.env.PUBLIC_URL || "https://fofa.lol"}/#join?ref=${user.referral_code}`,
         referral_count: user.referral_count || 0,
         recruiter_rank: myRank,
         referred_users: referredUsers.map(u => ({
