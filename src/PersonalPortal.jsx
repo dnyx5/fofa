@@ -491,8 +491,12 @@ function Header({ token, onLogout }) {
           PASSPORT
         </div>
       </a>
-      
+
       <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <a href="#search" style={{ color: COLORS.body, opacity: 0.5, textDecoration: "none", fontSize: 16, padding: "4px 8px", transition: "opacity 0.2s" }}
+          onMouseEnter={e => e.target.style.opacity = "1"} onMouseLeave={e => e.target.style.opacity = "0.5"}
+          title="Search">🔍</a>
+        {token && <NotificationBell token={token} />}
         <a href="/" style={{
           color: COLORS.body,
           opacity: 0.7,
@@ -514,6 +518,171 @@ function Header({ token, onLogout }) {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// NOTIFICATION BELL COMPONENT
+// ============================================================================
+
+function NotificationBell({ token }) {
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showPanel, setShowPanel] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const panelRef = React.useRef(null);
+
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30000); // Poll every 30s
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (panelRef.current && !panelRef.current.contains(e.target)) {
+        setShowPanel(false);
+      }
+    }
+    if (showPanel) document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showPanel]);
+
+  async function fetchNotifications() {
+    try {
+      const res = await fetch(`${API_URL}/user/notifications?limit=20`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setNotifications(data.notifications || []);
+      setUnreadCount(data.unread_count || 0);
+    } catch (err) {
+      // silent
+    }
+  }
+
+  async function markAllRead() {
+    setLoading(true);
+    try {
+      await fetch(`${API_URL}/user/notifications/read`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ all: true }),
+      });
+      setUnreadCount(0);
+      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    } catch (err) {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function formatTimeAgo(ts) {
+    const diff = Date.now() - new Date(ts).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "now";
+    if (mins < 60) return `${mins}m`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d`;
+  }
+
+  const typeIcons = {
+    new_follower: "👤",
+    endorsement: "🛡️",
+    badge_earned: "🏅",
+    article_published: "📝",
+    club_approved: "🏟️",
+    announcement: "📢",
+    referral_joined: "🤝",
+    level_up: "⬆️",
+  };
+
+  return (
+    <div style={{ position: "relative" }} ref={panelRef}>
+      <button
+        onClick={() => { setShowPanel(!showPanel); if (!showPanel) fetchNotifications(); }}
+        style={{
+          background: "transparent", border: "none", cursor: "pointer", padding: "4px 8px",
+          fontSize: 18, position: "relative", color: COLORS.body, opacity: 0.7, transition: "opacity 0.2s",
+        }}
+        onMouseEnter={e => e.currentTarget.style.opacity = "1"}
+        onMouseLeave={e => e.currentTarget.style.opacity = "0.7"}
+        title="Notifications"
+      >
+        🔔
+        {unreadCount > 0 && (
+          <span style={{
+            position: "absolute", top: 0, right: 2, minWidth: 16, height: 16, borderRadius: 8,
+            background: COLORS.red, color: "#fff", fontSize: 9, fontFamily: "'DM Mono', monospace",
+            fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px",
+          }}>
+            {unreadCount > 9 ? "9+" : unreadCount}
+          </span>
+        )}
+      </button>
+
+      {showPanel && (
+        <div style={{
+          position: "absolute", top: "100%", right: 0, marginTop: 8, width: 360,
+          background: COLORS.bgSoft, border: `1px solid ${COLORS.hairlineStrong}`, borderRadius: 8,
+          boxShadow: "0 8px 40px rgba(0,0,0,0.5)", zIndex: 100, overflow: "hidden",
+          animation: "fadeIn 0.2s ease-out", maxHeight: "70vh", display: "flex", flexDirection: "column",
+        }}>
+          {/* Header */}
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${COLORS.hairline}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 13, fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 700, color: "#F2F5EE", letterSpacing: "0.05em" }}>
+              NOTIFICATIONS {unreadCount > 0 && `(${unreadCount})`}
+            </span>
+            {unreadCount > 0 && (
+              <button onClick={markAllRead} disabled={loading} style={{
+                background: "transparent", border: "none", color: COLORS.green, fontSize: 10,
+                fontFamily: "'DM Mono', monospace", cursor: "pointer", letterSpacing: "0.1em",
+              }}>
+                {loading ? "..." : "MARK ALL READ"}
+              </button>
+            )}
+          </div>
+
+          {/* Notifications list */}
+          <div style={{ overflowY: "auto", flex: 1 }}>
+            {notifications.length === 0 ? (
+              <div style={{ padding: "32px 16px", textAlign: "center" }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>🔔</div>
+                <div style={{ fontSize: 13, color: COLORS.body, opacity: 0.5 }}>No notifications yet</div>
+              </div>
+            ) : (
+              notifications.map((n, i) => (
+                <a
+                  key={n._id || i}
+                  href={n.link || "#"}
+                  onClick={() => setShowPanel(false)}
+                  style={{
+                    display: "flex", gap: 12, padding: "12px 16px", textDecoration: "none", color: "inherit",
+                    borderBottom: `1px solid ${COLORS.hairline}`, transition: "background 0.2s",
+                    background: n.read ? "transparent" : COLORS.greenGlow,
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = COLORS.bgCard}
+                  onMouseLeave={e => e.currentTarget.style.background = n.read ? "transparent" : COLORS.greenGlow}
+                >
+                  <span style={{ fontSize: 20, flexShrink: 0 }}>{typeIcons[n.type] || "📌"}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, color: "#F2F5EE", marginBottom: 2, lineHeight: 1.3 }}>{n.title}</div>
+                    {n.message && <div style={{ fontSize: 11, color: COLORS.body, opacity: 0.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.message}</div>}
+                  </div>
+                  <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color: COLORS.body, opacity: 0.4, flexShrink: 0 }}>
+                    {formatTimeAgo(n.created_at)}
+                  </span>
+                </a>
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
